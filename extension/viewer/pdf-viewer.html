@@ -11,8 +11,15 @@
     <main class="workspace">
       <aside class="sidebar panel">
         <div class="sidebar-copy">
-          <p class="eyebrow">EZSign Signer</p>
-          <h1 id="fileName">Loading document...</h1>
+          <div class="sidebar-headline">
+            <div>
+              <p class="eyebrow">EZSign Signer</p>
+              <h1 id="fileName">Loading document...</h1>
+            </div>
+            <button class="icon-button settings-button" id="openSettingsButton" type="button" aria-label="Open settings">
+              &#9881;
+            </button>
+          </div>
           <p class="muted" id="statusText">Preparing the signing workspace.</p>
         </div>
 
@@ -22,9 +29,9 @@
         </div>
 
         <section class="prompt-card" id="signaturePrompt" hidden>
-          <h2>Draw your first signature</h2>
+          <h2>Create your first signature</h2>
           <p>
-            This workspace stores signatures inside the extension, so you can drag them onto any
+            This workspace stores signatures inside the extension, so you can place them on any
             open PDF.
           </p>
           <button id="promptAddSignatureButton" type="button">Add Signature</button>
@@ -40,9 +47,10 @@
           </div>
         </section>
 
-        <section class="panel inset tips">
+      <section class="panel inset tips">
           <h2>How It Works</h2>
-          <p>Drag a saved signature onto the page where it belongs.</p>
+          <p>Drag a saved signature onto the page or click anywhere to place it.</p>
+          <p>Use Add Date to stamp today's date, then edit the placed date directly on the page if needed.</p>
           <p>Use Open later to return to this workspace without downloading the PDF again.</p>
           <p>Save Signed Copy exports a fresh PDF with the placed signatures embedded.</p>
         </section>
@@ -77,11 +85,16 @@
         <div class="modal-header">
           <div>
             <p class="eyebrow">Signature Capture</p>
-            <h2 id="signatureModalTitle">Add a hand-drawn signature</h2>
+            <h2 id="signatureModalTitle">Add a signature</h2>
           </div>
           <button class="icon-button" id="closeModalButton" type="button" aria-label="Close signature dialog">
             x
           </button>
+        </div>
+
+        <div class="segmented-control" role="tablist" aria-label="Signature style">
+          <button class="segment is-active" id="drawSignatureModeButton" type="button">Hand Drawn</button>
+          <button class="segment" id="typedSignatureModeButton" type="button">Typed Text</button>
         </div>
 
         <label class="field">
@@ -89,18 +102,121 @@
           <input id="signatureNameInput" type="text" maxlength="40" placeholder="Example: Jason Primary" />
         </label>
 
-        <div class="signature-pad-shell">
-          <canvas id="signaturePad" width="640" height="240"></canvas>
+        <div id="drawnSignatureFields">
+          <div class="signature-pad-shell">
+            <canvas id="signaturePad" width="640" height="240"></canvas>
+          </div>
+        </div>
+
+        <div class="typed-signature-fields" id="typedSignatureFields" hidden>
+          <label class="field">
+            <span>Typed signature text</span>
+            <input id="typedSignatureTextInput" type="text" maxlength="60" placeholder="Example: Jason Fischell" />
+          </label>
+
+          <div class="font-picker">
+            <span class="font-picker-label">Font options</span>
+            <div class="font-grid" id="typedSignatureFontGrid">
+              <button class="font-option is-active" data-font-option="Arial, sans-serif" type="button" style="font-family: Arial, sans-serif;">Arial</button>
+              <button class="font-option" data-font-option="'Times New Roman', serif" type="button" style="font-family: 'Times New Roman', serif;">Times New Roman</button>
+              <button class="font-option" data-font-option="'Segoe Script', cursive" type="button" style="font-family: 'Segoe Script', cursive;">Segoe Script</button>
+              <button class="font-option" data-font-option="'Brush Script MT', cursive" type="button" style="font-family: 'Brush Script MT', cursive;">Brush Script MT</button>
+              <button class="font-option" data-font-option="'Lucida Handwriting', cursive" type="button" style="font-family: 'Lucida Handwriting', cursive;">Lucida Handwriting</button>
+            </div>
+          </div>
+
+          <div class="typed-preview-shell">
+            <span class="font-picker-label">Preview</span>
+            <div class="typed-preview" id="typedSignaturePreview">Jason Fischell</div>
+          </div>
         </div>
 
         <p class="muted modal-help" id="signatureModalHelp">
-          Sign with your mouse, trackpad, or stylus. We will store this inside the extension.
+          Sign with your mouse, trackpad, stylus, or typed text. We will store this inside the extension.
         </p>
 
         <div class="modal-actions">
           <button class="secondary" id="clearSignaturePadButton" type="button">Clear</button>
           <button class="secondary" id="cancelSignatureButton" type="button">Close</button>
           <button id="saveSignatureButton" type="button">Save Signature</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="settingsModal" hidden>
+      <section class="modal-panel settings-modal" aria-labelledby="settingsModalTitle" aria-modal="true" role="dialog">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Workspace Settings</p>
+            <h2 id="settingsModalTitle">EZSign preferences</h2>
+          </div>
+          <button class="icon-button" id="closeSettingsButton" type="button" aria-label="Close settings dialog">
+            x
+          </button>
+        </div>
+
+        <section class="settings-section">
+          <div class="section-header">
+            <h2>Signature Settings</h2>
+            <button class="secondary" id="saveSignatureDefaultsButton" type="button">Set as Default</button>
+          </div>
+          <p class="muted">Choose the color used for new signatures you create in this workspace.</p>
+          <div class="color-grid" id="signatureColorGrid">
+            <button class="color-option" data-signature-color="black" type="button"><span class="color-swatch black"></span><span>Black</span></button>
+            <button class="color-option" data-signature-color="blue" type="button"><span class="color-swatch blue"></span><span>Blue</span></button>
+            <button class="color-option" data-signature-color="red" type="button"><span class="color-swatch red"></span><span>Red</span></button>
+            <button class="color-option" data-signature-color="green" type="button"><span class="color-swatch green"></span><span>Green</span></button>
+            <button class="color-option" data-signature-color="yellow" type="button"><span class="color-swatch yellow"></span><span>Yellow</span></button>
+            <button class="color-option" data-signature-color="white" type="button"><span class="color-swatch white"></span><span>White</span></button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="section-header">
+            <h2>Date Settings</h2>
+            <button class="secondary" id="saveDateDefaultsButton" type="button">Set as Default</button>
+          </div>
+          <p class="muted">Choose the format used when you add today's date to the document.</p>
+          <div class="format-list" id="dateFormatGrid">
+            <button class="format-option" data-date-format="long" type="button">August 1, 2026</button>
+            <button class="format-option" data-date-format="short" type="button">8/1/26</button>
+            <button class="format-option" data-date-format="stamp" type="button">01-AUG-2026</button>
+            <button class="format-option" data-date-format="iso" type="button">2026-08-01</button>
+          </div>
+        </section>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="dateEditorModal" hidden>
+      <section class="modal-panel date-editor-modal" aria-labelledby="dateEditorModalTitle" aria-modal="true" role="dialog">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Date Placement</p>
+            <h2 id="dateEditorModalTitle">Edit placed date</h2>
+          </div>
+          <button class="icon-button" id="closeDateEditorButton" type="button" aria-label="Close date editor">
+            x
+          </button>
+        </div>
+
+        <label class="field">
+          <span>Date value</span>
+          <input id="dateEditorInput" type="date" />
+        </label>
+
+        <div class="font-picker">
+          <span class="font-picker-label">Date format</span>
+          <div class="format-list" id="dateEditorFormatGrid">
+            <button class="format-option" data-date-editor-format="long" type="button">August 1, 2026</button>
+            <button class="format-option" data-date-editor-format="short" type="button">8/1/26</button>
+            <button class="format-option" data-date-editor-format="stamp" type="button">01-AUG-2026</button>
+            <button class="format-option" data-date-editor-format="iso" type="button">2026-08-01</button>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="secondary" id="cancelDateEditorButton" type="button">Close</button>
+          <button id="saveDateEditorButton" type="button">Apply Changes</button>
         </div>
       </section>
     </div>

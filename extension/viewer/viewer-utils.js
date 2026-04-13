@@ -1,4 +1,9 @@
 const SIGNATURE_STORAGE_KEY = "savedSignatures";
+const PREFERENCES_STORAGE_KEY = "ezsignViewerPreferences";
+const DEFAULT_PREFERENCES = {
+  signatureColor: "black",
+  dateFormat: "long"
+};
 
 export async function loadPreviewFromCache(cacheKey) {
   const stored = await chrome.storage.session.get(cacheKey);
@@ -21,19 +26,40 @@ export async function loadSignatures() {
   }
 
   return stored[SIGNATURE_STORAGE_KEY]
-    .filter((signature) => signature?.id && signature?.dataUrl)
+    .filter((signature) => signature?.id && (signature?.dataUrl || signature?.variant === "typed"))
     .map((signature) => ({
       id: String(signature.id),
       name: String(signature.name || "Saved Signature"),
-      dataUrl: String(signature.dataUrl),
+      variant: signature.variant === "typed" ? "typed" : "drawn",
+      dataUrl: signature.dataUrl ? String(signature.dataUrl) : "",
       width: Number(signature.width || 320),
       height: Number(signature.height || 120),
+      color: String(signature.color || "black"),
+      typedText: signature.typedText ? String(signature.typedText) : "",
+      fontFamily: signature.fontFamily ? String(signature.fontFamily) : "",
       createdAt: signature.createdAt || new Date().toISOString()
     }));
 }
 
 export async function saveSignatures(signatures) {
   await chrome.storage.local.set({ [SIGNATURE_STORAGE_KEY]: signatures });
+}
+
+export async function loadPreferences() {
+  const stored = await chrome.storage.local.get({ [PREFERENCES_STORAGE_KEY]: DEFAULT_PREFERENCES });
+  return {
+    ...DEFAULT_PREFERENCES,
+    ...(stored[PREFERENCES_STORAGE_KEY] || {})
+  };
+}
+
+export async function savePreferences(preferences) {
+  await chrome.storage.local.set({
+    [PREFERENCES_STORAGE_KEY]: {
+      ...DEFAULT_PREFERENCES,
+      ...preferences
+    }
+  });
 }
 
 export async function saveQueueStatus(queueItemId, updates) {

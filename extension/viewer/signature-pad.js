@@ -15,7 +15,8 @@ export function createSignaturePad(canvas) {
 
   return {
     clear: reset,
-    exportSignature
+    exportSignature,
+    setColor
   };
 
   function reset() {
@@ -23,10 +24,15 @@ export function createSignaturePad(canvas) {
     context.lineCap = "round";
     context.lineJoin = "round";
     context.lineWidth = 4;
-    context.strokeStyle = "#154046";
+    context.strokeStyle = canvas.dataset.signatureColor || "#111111";
     state.drawing = false;
     state.hasInk = false;
     state.lastPoint = null;
+  }
+
+  function setColor(color) {
+    canvas.dataset.signatureColor = color;
+    context.strokeStyle = color;
   }
 
   function handlePointerDown(event) {

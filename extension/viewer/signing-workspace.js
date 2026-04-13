@@ -7,6 +7,32 @@ const MAX_SIGNATURE_WIDTH_RATIO = 0.36;
 const MAX_RENDER_WIDTH = 920;
 const MIN_RENDER_WIDTH = 540;
 const POINTER_DRAG_THRESHOLD = 8;
+const DATE_TEXT_PADDING_X = 18;
+const DATE_TEXT_PADDING_Y = 14;
+const DEFAULT_DATE_FONT_SIZE = 26;
+const COLOR_OPTIONS = {
+  black: { label: "Black", value: "#111111" },
+  blue: { label: "Blue", value: "#1f5cb8" },
+  red: { label: "Red", value: "#c62828" },
+  green: { label: "Green", value: "#2e7d32" },
+  yellow: { label: "Yellow", value: "#d4a900" },
+  white: { label: "White", value: "#ffffff" }
+};
+const DATE_FORMAT_OPTIONS = {
+  long: "August 1, 2026",
+  short: "8/1/26",
+  stamp: "01-AUG-2026",
+  iso: "2026-08-01"
+};
+const TYPED_FONT_OPTIONS = [
+  "Arial, sans-serif",
+  "'Times New Roman', serif",
+  "'Segoe Script', cursive",
+  "'Brush Script MT', cursive",
+  "'Lucida Handwriting', cursive"
+];
+const measurementCanvas = document.createElement("canvas");
+const measurementContext = measurementCanvas.getContext("2d");
 
 export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -28,7 +54,19 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     pointerSession: null,
     dragGhost: null,
     highlightedStage: null,
-    ignoreClickUntil: 0
+    ignoreClickUntil: 0,
+    placementMode: "signature",
+    signatureInputMode: "drawn",
+    selectedTypedFont: TYPED_FONT_OPTIONS[0],
+    currentSettings: {
+      signatureColor: "black",
+      dateFormat: "long"
+    },
+    savedPreferences: {
+      signatureColor: "black",
+      dateFormat: "long"
+    },
+    dateEditorPlacementId: null
   };
 
   let signaturePad = null;
@@ -45,7 +83,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       bindEvents();
       await loadWorkspace();
       if (state.signatures.length === 0) {
-        setStatus("Draw a signature to start signing this PDF.");
+        setStatus("Add a signature to start signing this PDF.");
         requestAnimationFrame(() => openSignatureModal(true));
       } else {
         setStatus("Drag a stored signature onto any page, then save a signed copy.");
@@ -55,14 +93,24 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
   };
 
   function bindEvents() {
+    ui.openSettingsButton.addEventListener("click", openSettingsModal);
+    ui.closeSettingsButton.addEventListener("click", closeSettingsModal);
+    ui.saveSignatureDefaultsButton.addEventListener("click", () => saveDefaultSetting("signatureColor"));
+    ui.saveDateDefaultsButton.addEventListener("click", () => saveDefaultSetting("dateFormat"));
+    ui.signatureColorGrid.addEventListener("click", handleSettingsClick);
+    ui.dateFormatGrid.addEventListener("click", handleSettingsClick);
     ui.addSignatureButton.addEventListener("click", () => openSignatureModal(false));
     ui.promptAddSignatureButton.addEventListener("click", () => openSignatureModal(true));
     ui.closeModalButton.addEventListener("click", closeSignatureModal);
     ui.cancelSignatureButton.addEventListener("click", closeSignatureModal);
+    ui.drawSignatureModeButton.addEventListener("click", () => setSignatureInputMode("drawn"));
+    ui.typedSignatureModeButton.addEventListener("click", () => setSignatureInputMode("typed"));
+    ui.typedSignatureTextInput.addEventListener("input", renderTypedSignaturePreview);
+    ui.typedSignatureFontGrid.addEventListener("click", handleTypedFontSelection);
     ui.clearSignaturePadButton.addEventListener("click", () => {
       signaturePad.clear();
       ui.signatureModalHelp.textContent =
-        "Sign with your mouse, trackpad, or stylus. We will store this inside the extension.";
+        "Sign with your mouse, trackpad, stylus, or typed text. We will store this inside the extension.";
     });
     ui.saveSignatureButton.addEventListener("click", saveSignature);
     ui.clearPlacementsButton.addEventListener("click", clearPlacements);
@@ -71,6 +119,10 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     ui.signatureLibrary.addEventListener("pointerdown", handleSignaturePointerDown);
     ui.pagesContainer.addEventListener("pointerdown", handlePagePointerDown);
     ui.pagesContainer.addEventListener("click", handlePagesClick);
+    ui.closeDateEditorButton.addEventListener("click", closeDateEditorModal);
+    ui.cancelDateEditorButton.addEventListener("click", closeDateEditorModal);
+    ui.saveDateEditorButton.addEventListener("click", applyDatePlacementChanges);
+    ui.dateEditorFormatGrid.addEventListener("click", handleDateEditorFormatSelection);
     window.addEventListener("pointermove", handleGlobalPointerMove);
     window.addEventListener("pointerup", handleGlobalPointerUp);
     window.addEventListener("pointercancel", cancelPointerSession);
@@ -83,8 +135,22 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       event.returnValue = "";
     });
     window.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !ui.signatureModal.hidden) {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      if (!ui.signatureModal.hidden) {
         closeSignatureModal();
+        return;
+      }
+
+      if (!ui.settingsModal.hidden) {
+        closeSettingsModal();
+        return;
+      }
+
+      if (!ui.dateEditorModal.hidden) {
+        closeDateEditorModal();
       }
     });
   }
@@ -98,13 +164,18 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     state.preview = await helpers.loadPreviewFromCache(state.cacheKey);
     state.documentBytes = helpers.decodeBase64Url(state.preview.base64UrlData);
     state.signatures = await helpers.loadSignatures();
+    state.savedPreferences = await helpers.loadPreferences();
+    state.currentSettings = { ...state.savedPreferences };
     if (state.signatures.length > 0) {
       state.activeSignatureId = state.signatures[0].id;
     }
+    signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
     ui.fileName.textContent = state.preview.filename || "Downloaded PDF";
     document.title = `${state.preview.filename || "Downloaded PDF"} - EZSign Signing Workspace`;
+    renderSettingsState();
     renderSignatureLibrary();
     renderPlacementSummary();
+    renderTypedSignaturePreview();
     await renderPdfDocument();
   }
 
@@ -137,7 +208,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     const title = document.createElement("h3");
     title.textContent = signature.name;
     const subtitle = document.createElement("p");
-    subtitle.textContent = state.activeSignatureId === signature.id ? "Ready to place" : "Drag onto the document";
+    subtitle.textContent = "Drag onto the document or click anywhere to sign.";
     copy.append(title, subtitle);
 
     const deleteButton = document.createElement("button");
@@ -159,39 +230,54 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
 
     const actions = document.createElement("div");
     actions.className = "signature-card-actions";
+    const dateButton = document.createElement("button");
+    dateButton.className = "secondary";
+    dateButton.type = "button";
+    dateButton.dataset.addDateSignatureId = signature.id;
+    dateButton.textContent = "Add Date";
     const placeButton = document.createElement("button");
     placeButton.className = "secondary";
     placeButton.type = "button";
     placeButton.dataset.armSignatureId = signature.id;
     placeButton.textContent = state.activeSignatureId === signature.id ? "Selected" : "Select";
-    actions.append(placeButton);
+    if (state.activeSignatureId === signature.id) {
+      placeButton.disabled = true;
+    }
+    actions.append(dateButton, placeButton);
 
     card.append(header, swatch, actions);
     return card;
   }
 
   async function saveSignature() {
-    const signature = signaturePad.exportSignature();
-    if (!signature) {
-      ui.signatureModalHelp.textContent = "Draw the signature before saving it.";
-      return;
-    }
-
     const baseName = ui.signatureNameInput.value.trim() || defaultSignatureName();
     const uniqueName = makeUniqueSignatureName(baseName);
+    const signature = state.signatureInputMode === "typed" ? buildTypedSignatureAsset() : signaturePad.exportSignature();
+    if (!signature) {
+      ui.signatureModalHelp.textContent =
+        state.signatureInputMode === "typed"
+          ? "Enter the typed signature text before saving it."
+          : "Draw the signature before saving it.";
+      return;
+    }
 
     const nextSignature = {
       id: crypto.randomUUID(),
       name: uniqueName,
+      variant: state.signatureInputMode,
       dataUrl: signature.dataUrl,
       width: signature.width,
       height: signature.height,
+      color: state.currentSettings.signatureColor,
+      typedText: state.signatureInputMode === "typed" ? ui.typedSignatureTextInput.value.trim() : "",
+      fontFamily: state.signatureInputMode === "typed" ? state.selectedTypedFont : "",
       createdAt: new Date().toISOString()
     };
 
     state.signatures = [nextSignature, ...state.signatures];
     await helpers.saveSignatures(state.signatures);
     state.activeSignatureId = nextSignature.id;
+    state.placementMode = "signature";
     renderSignatureLibrary();
     closeSignatureModal();
     setStatus(`Saved ${nextSignature.name}. Drag it onto the PDF or click a page to place it.`);
@@ -201,10 +287,17 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     hidePlacementTooltip();
     ui.signatureModal.hidden = false;
     ui.signatureNameInput.value = defaultSignatureName();
+    ui.typedSignatureTextInput.value = "";
+    state.signatureInputMode = "drawn";
+    state.selectedTypedFont = TYPED_FONT_OPTIONS[0];
+    renderTypedFontSelection();
+    setSignatureInputMode("drawn");
+    signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
     ui.signatureModalHelp.textContent = force
       ? "No saved signatures were found, so add one now to start signing this PDF."
-      : "Sign with your mouse, trackpad, or stylus. We will store this inside the extension.";
+      : "Sign with your mouse, trackpad, stylus, or typed text. We will store this inside the extension.";
     signaturePad.clear();
+    renderTypedSignaturePreview();
     ui.signatureNameInput.focus();
   }
 
@@ -240,6 +333,15 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       return;
     }
 
+    const addDateButton = event.target.closest("[data-add-date-signature-id]");
+    if (addDateButton) {
+      state.activeSignatureId = addDateButton.dataset.addDateSignatureId;
+      state.placementMode = "date";
+      renderSignatureLibrary();
+      setStatus("Date mode is ready. Click anywhere in the PDF to add today's date.");
+      return;
+    }
+
     const armButton = event.target.closest("[data-arm-signature-id]");
     const signatureId = armButton?.dataset.armSignatureId;
     if (!signatureId) {
@@ -247,6 +349,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     }
 
     state.activeSignatureId = signatureId;
+    state.placementMode = "signature";
     renderSignatureLibrary();
     setStatus("Signature selected for placement.");
   }
@@ -259,6 +362,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
 
     event.preventDefault();
     state.activeSignatureId = swatch.dataset.signatureId;
+    state.placementMode = "signature";
     renderSignatureLibrary();
     beginPointerSession({
       type: "library",
@@ -299,7 +403,10 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       return;
     }
 
-    if (event.target.closest("[data-remove-placement-id]")) {
+    if (
+      event.target.closest("[data-remove-placement-id]") ||
+      event.target.closest("[data-edit-date-placement-id]")
+    ) {
       return;
     }
 
@@ -322,6 +429,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
         startClientY: event.clientY,
         startWidth: placement.width,
         startHeight: placement.height,
+        startFontSize: placement.fontSize || null,
         aspectRatio: placement.width / placement.height,
         dragging: false
       });
@@ -444,6 +552,12 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       return;
     }
 
+    const editButton = event.target.closest("[data-edit-date-placement-id]");
+    if (editButton) {
+      openDateEditorModal(editButton.dataset.editDatePlacementId);
+      return;
+    }
+
     const removeButton = event.target.closest("[data-remove-placement-id]");
     if (removeButton) {
       removePlacement(removeButton.dataset.removePlacementId);
@@ -465,6 +579,13 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     if (!state.activeSignatureId) {
       state.selectedPlacementId = null;
       renderAllPlacements();
+      return;
+    }
+
+    if (state.placementMode === "date") {
+      placeDate(stage, event.clientX, event.clientY, state.activeSignatureId);
+      state.placementMode = "signature";
+      renderSignatureLibrary();
       return;
     }
 
@@ -502,6 +623,42 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     setStatus(`Placed ${signature.name} on page ${pageIndex + 1}.`);
   }
 
+  function placeDate(stage, clientX, clientY, signatureId) {
+    const pageIndex = Number(stage.dataset.pageIndex);
+    const layout = state.pageLayouts[pageIndex];
+    if (!layout) {
+      return;
+    }
+
+    const dateValue = getTodayIsoValue();
+    const formatId = state.currentSettings.dateFormat;
+    const fontSize = DEFAULT_DATE_FONT_SIZE;
+    const dimensions = measureDatePlacement(dateValue, formatId, fontSize);
+    const rect = stage.getBoundingClientRect();
+    const placement = {
+      id: crypto.randomUUID(),
+      type: "date",
+      pageIndex,
+      signatureId,
+      dateValue,
+      formatId,
+      fontSize,
+      text: formatDateValue(dateValue, formatId),
+      x: clamp(clientX - rect.left - dimensions.width / 2, 0, layout.width - dimensions.width),
+      y: clamp(clientY - rect.top - dimensions.height / 2, 0, layout.height - dimensions.height),
+      width: dimensions.width,
+      height: dimensions.height
+    };
+
+    state.placements = [...state.placements, placement];
+    state.selectedPlacementId = placement.id;
+    state.hasUnsavedChanges = true;
+    renderPlacementsForPage(pageIndex);
+    renderPlacementSummary();
+    updateToolbar();
+    setStatus("Added today's date. Signature placement is ready again.");
+  }
+
   function renderPlacementsForPage(pageIndex) {
     const pageView = state.pageElements.get(pageIndex);
     if (!pageView) {
@@ -516,7 +673,6 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
   }
 
   function createPlacementNode(placement) {
-    const signature = getSignature(placement.signatureId);
     const node = document.createElement("div");
     node.className = `placed-signature${state.selectedPlacementId === placement.id ? " is-selected" : ""}`;
     node.dataset.placementId = placement.id;
@@ -525,9 +681,27 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     node.style.top = `${placement.y}px`;
     node.style.width = `${placement.width}px`;
     node.style.height = `${placement.height}px`;
-    const image = document.createElement("img");
-    image.src = signature.dataUrl;
-    image.alt = `${signature.name} placement`;
+
+    if (placement.type === "date") {
+      node.classList.add("placed-date");
+      const editButton = document.createElement("button");
+      editButton.className = "placement-edit";
+      editButton.type = "button";
+      editButton.dataset.editDatePlacementId = placement.id;
+      editButton.textContent = "Edit";
+      const text = document.createElement("div");
+      text.className = "placed-date-text";
+      text.textContent = placement.text;
+      text.style.fontSize = `${placement.fontSize}px`;
+      node.append(editButton, text);
+    } else {
+      const signature = getSignature(placement.signatureId);
+      const image = document.createElement("img");
+      image.src = signature.dataUrl;
+      image.alt = `${signature.name} placement`;
+      node.append(image);
+    }
+
     const removeButton = document.createElement("button");
     removeButton.className = "placement-remove";
     removeButton.type = "button";
@@ -539,7 +713,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     resizeHandle.dataset.resizePlacementId = placement.id;
     resizeHandle.setAttribute("aria-label", "Resize placed signature");
 
-    node.append(image, removeButton, resizeHandle);
+    node.append(removeButton, resizeHandle);
     return node;
   }
 
@@ -730,7 +904,19 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       nextWidth = nextHeight * session.aspectRatio;
     }
 
-    updatePlacement(placement.id, { width: nextWidth, height: nextHeight });
+    const updates =
+      placement.type === "date" && session.startFontSize
+        ? {
+            width: nextWidth,
+            height: nextHeight,
+            fontSize: Math.max(14, session.startFontSize * (nextWidth / session.startWidth))
+          }
+        : {
+            width: nextWidth,
+            height: nextHeight
+          };
+
+    updatePlacement(placement.id, updates);
     state.hasUnsavedChanges = true;
     renderPlacementsForPage(placement.pageIndex);
   }
@@ -774,7 +960,12 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
   }
 
   function updatePlacementTooltip(event) {
-    if (!state.activeSignatureId || !ui.signatureModal.hidden) {
+    if (
+      !state.activeSignatureId ||
+      !ui.signatureModal.hidden ||
+      !ui.settingsModal.hidden ||
+      !ui.dateEditorModal.hidden
+    ) {
       hidePlacementTooltip();
       return;
     }
@@ -794,11 +985,16 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       return;
     }
 
-    showPlacementTooltip(event.clientX, event.clientY);
+    showPlacementTooltip(
+      event.clientX,
+      event.clientY,
+      state.placementMode === "date" ? "Click to add today's date" : "Click to place signature"
+    );
   }
 
-  function showPlacementTooltip(clientX, clientY) {
+  function showPlacementTooltip(clientX, clientY, text) {
     ui.placementTooltip.hidden = false;
+    ui.placementTooltip.textContent = text;
     ui.placementTooltip.style.left = `${clientX + 16}px`;
     ui.placementTooltip.style.top = `${clientY + 16}px`;
   }
@@ -844,6 +1040,222 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       const delta = Math.ceil(((clientY - (rect.bottom - threshold)) / threshold) * maxSpeed);
       ui.pagesShell.scrollTop += delta;
     }
+  }
+
+  function setSignatureInputMode(mode) {
+    state.signatureInputMode = mode;
+    const typedMode = mode === "typed";
+    ui.drawSignatureModeButton.classList.toggle("is-active", !typedMode);
+    ui.typedSignatureModeButton.classList.toggle("is-active", typedMode);
+    ui.drawnSignatureFields.hidden = typedMode;
+    ui.typedSignatureFields.hidden = !typedMode;
+    ui.clearSignaturePadButton.hidden = typedMode;
+    signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
+    renderTypedSignaturePreview();
+  }
+
+  function handleTypedFontSelection(event) {
+    const button = event.target.closest("[data-font-option]");
+    if (!button) {
+      return;
+    }
+
+    state.selectedTypedFont = button.dataset.fontOption;
+    renderTypedFontSelection();
+    renderTypedSignaturePreview();
+  }
+
+  function renderTypedFontSelection() {
+    for (const button of ui.typedSignatureFontGrid.querySelectorAll("[data-font-option]")) {
+      button.classList.toggle("is-active", button.dataset.fontOption === state.selectedTypedFont);
+    }
+  }
+
+  function renderTypedSignaturePreview() {
+    const previewText = ui.typedSignatureTextInput.value.trim() || "Jason Fischell";
+    ui.typedSignaturePreview.textContent = previewText;
+    ui.typedSignaturePreview.style.fontFamily = state.selectedTypedFont;
+    ui.typedSignaturePreview.style.color = getSignatureColorValue(state.currentSettings.signatureColor);
+    ui.typedSignaturePreview.style.fontSize = "38px";
+  }
+
+  function buildTypedSignatureAsset() {
+    const typedText = ui.typedSignatureTextInput.value.trim();
+    if (!typedText) {
+      return null;
+    }
+
+    const fontSize = 56;
+    measurementContext.font = `${fontSize}px ${state.selectedTypedFont}`;
+    const textWidth = Math.ceil(measurementContext.measureText(typedText).width);
+    const width = Math.max(260, textWidth + 36);
+    const height = fontSize + 40;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    context.font = `${fontSize}px ${state.selectedTypedFont}`;
+    context.fillStyle = getSignatureColorValue(state.currentSettings.signatureColor);
+    context.textBaseline = "middle";
+    context.fillText(typedText, 18, height / 2 + 2);
+
+    return {
+      dataUrl: canvas.toDataURL("image/png"),
+      width,
+      height
+    };
+  }
+
+  function handleSettingsClick(event) {
+    const colorButton = event.target.closest("[data-signature-color]");
+    if (colorButton) {
+      state.currentSettings.signatureColor = colorButton.dataset.signatureColor;
+      signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
+      renderSettingsState();
+      renderTypedSignaturePreview();
+      return;
+    }
+
+    const formatButton = event.target.closest("[data-date-format]");
+    if (!formatButton) {
+      return;
+    }
+
+    state.currentSettings.dateFormat = formatButton.dataset.dateFormat;
+    renderSettingsState();
+  }
+
+  async function saveDefaultSetting(key) {
+    state.savedPreferences = {
+      ...state.savedPreferences,
+      [key]: state.currentSettings[key]
+    };
+    await helpers.savePreferences(state.savedPreferences);
+    setStatus(
+      key === "signatureColor"
+        ? "Saved the default signature color."
+        : "Saved the default date format."
+    );
+  }
+
+  function renderSettingsState() {
+    for (const button of ui.signatureColorGrid.querySelectorAll("[data-signature-color]")) {
+      button.classList.toggle("is-active", button.dataset.signatureColor === state.currentSettings.signatureColor);
+    }
+
+    for (const button of ui.dateFormatGrid.querySelectorAll("[data-date-format]")) {
+      button.classList.toggle("is-active", button.dataset.dateFormat === state.currentSettings.dateFormat);
+    }
+  }
+
+  function openSettingsModal() {
+    hidePlacementTooltip();
+    ui.settingsModal.hidden = false;
+  }
+
+  function closeSettingsModal() {
+    ui.settingsModal.hidden = true;
+  }
+
+  function openDateEditorModal(placementId) {
+    const placement = getPlacement(placementId);
+    if (!placement || placement.type !== "date") {
+      return;
+    }
+
+    hidePlacementTooltip();
+    state.dateEditorPlacementId = placementId;
+    ui.dateEditorInput.value = placement.dateValue;
+    for (const button of ui.dateEditorFormatGrid.querySelectorAll("[data-date-editor-format]")) {
+      button.classList.toggle("is-active", button.dataset.dateEditorFormat === placement.formatId);
+    }
+    ui.dateEditorModal.hidden = false;
+  }
+
+  function closeDateEditorModal() {
+    state.dateEditorPlacementId = null;
+    ui.dateEditorModal.hidden = true;
+  }
+
+  function handleDateEditorFormatSelection(event) {
+    const button = event.target.closest("[data-date-editor-format]");
+    if (!button) {
+      return;
+    }
+
+    for (const option of ui.dateEditorFormatGrid.querySelectorAll("[data-date-editor-format]")) {
+      option.classList.toggle("is-active", option === button);
+    }
+  }
+
+  function applyDatePlacementChanges() {
+    const placement = getPlacement(state.dateEditorPlacementId);
+    if (!placement || placement.type !== "date" || !ui.dateEditorInput.value) {
+      return;
+    }
+
+    const selectedFormatButton = ui.dateEditorFormatGrid.querySelector(".is-active[data-date-editor-format]");
+    const formatId = selectedFormatButton?.dataset.dateEditorFormat || placement.formatId;
+    const dimensions = measureDatePlacement(ui.dateEditorInput.value, formatId, placement.fontSize);
+    const layout = state.pageLayouts[placement.pageIndex];
+    updatePlacement(placement.id, {
+      dateValue: ui.dateEditorInput.value,
+      formatId,
+      text: formatDateValue(ui.dateEditorInput.value, formatId),
+      width: Math.min(dimensions.width, layout.width - placement.x),
+      height: Math.min(dimensions.height, layout.height - placement.y)
+    });
+    state.hasUnsavedChanges = true;
+    renderPlacementsForPage(placement.pageIndex);
+    closeDateEditorModal();
+    setStatus("Updated the placed date.");
+  }
+
+  function measureDatePlacement(dateValue, formatId, fontSize) {
+    const text = formatDateValue(dateValue, formatId);
+    measurementContext.font = `700 ${fontSize}px "Segoe UI", sans-serif`;
+    return {
+      width: Math.ceil(measurementContext.measureText(text).width) + DATE_TEXT_PADDING_X * 2,
+      height: Math.ceil(fontSize * 1.25) + DATE_TEXT_PADDING_Y
+    };
+  }
+
+  function formatDateValue(dateValue, formatId) {
+    const date = new Date(`${dateValue}T12:00:00`);
+    if (Number.isNaN(date.getTime())) {
+      return dateValue;
+    }
+
+    switch (formatId) {
+      case "short":
+        return `${date.getMonth() + 1}/${date.getDate()}/${String(date.getFullYear()).slice(-2)}`;
+      case "stamp":
+        return `${String(date.getDate()).padStart(2, "0")}-${date
+          .toLocaleString("en-US", { month: "short" })
+          .toUpperCase()}-${date.getFullYear()}`;
+      case "iso":
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+          date.getDate()
+        ).padStart(2, "0")}`;
+      case "long":
+      default:
+        return date.toLocaleDateString("en-US", {
+          month: "long",
+          day: "numeric",
+          year: "numeric"
+        });
+    }
+  }
+
+  function getTodayIsoValue() {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
+      today.getDate()
+    ).padStart(2, "0")}`;
+  }
+
+  function getSignatureColorValue(colorKey) {
+    return COLOR_OPTIONS[colorKey]?.value || COLOR_OPTIONS.black.value;
   }
 
   function updateToolbar() {
@@ -915,12 +1327,30 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     const pdfDocument = await pdfLib.PDFDocument.load(state.documentBytes.slice());
     const pages = pdfDocument.getPages();
     const embeddedSignatures = new Map();
+    const helveticaFont = await pdfDocument.embedFont(pdfLib.StandardFonts.Helvetica);
 
     for (const placement of state.placements) {
-      const signature = getSignature(placement.signatureId);
       const layout = state.pageLayouts[placement.pageIndex];
       const page = pages[placement.pageIndex];
-      if (!signature || !layout || !page) {
+      if (!layout || !page) {
+        continue;
+      }
+
+      if (placement.type === "date") {
+        const pageSize = page.getSize();
+        const size = (placement.fontSize / layout.height) * pageSize.height;
+        page.drawText(placement.text, {
+          x: (placement.x / layout.width) * pageSize.width,
+          y: pageSize.height - ((placement.y + placement.height - 6) / layout.height) * pageSize.height,
+          size,
+          font: helveticaFont,
+          color: pdfLib.rgb(0.07, 0.07, 0.07)
+        });
+        continue;
+      }
+
+      const signature = getSignature(placement.signatureId);
+      if (!signature) {
         continue;
       }
 
@@ -966,26 +1396,46 @@ function getUi() {
   return {
     addSignatureButton: document.getElementById("addSignatureButton"),
     cancelSignatureButton: document.getElementById("cancelSignatureButton"),
+    cancelDateEditorButton: document.getElementById("cancelDateEditorButton"),
     clearPlacementsButton: document.getElementById("clearPlacementsButton"),
     clearSignaturePadButton: document.getElementById("clearSignaturePadButton"),
     closeModalButton: document.getElementById("closeModalButton"),
+    closeDateEditorButton: document.getElementById("closeDateEditorButton"),
+    closeSettingsButton: document.getElementById("closeSettingsButton"),
+    dateEditorFormatGrid: document.getElementById("dateEditorFormatGrid"),
+    dateEditorInput: document.getElementById("dateEditorInput"),
+    dateEditorModal: document.getElementById("dateEditorModal"),
+    dateFormatGrid: document.getElementById("dateFormatGrid"),
     documentHint: document.getElementById("documentHint"),
+    drawSignatureModeButton: document.getElementById("drawSignatureModeButton"),
+    drawnSignatureFields: document.getElementById("drawnSignatureFields"),
     errorState: document.getElementById("errorState"),
     fileName: document.getElementById("fileName"),
+    openSettingsButton: document.getElementById("openSettingsButton"),
     pagesContainer: document.getElementById("pagesContainer"),
     pagesShell: document.querySelector(".pages-shell"),
     placementCountChip: document.getElementById("placementCountChip"),
     placementTooltip: document.getElementById("placementTooltip"),
     promptAddSignatureButton: document.getElementById("promptAddSignatureButton"),
     saveSignatureButton: document.getElementById("saveSignatureButton"),
+    saveSignatureDefaultsButton: document.getElementById("saveSignatureDefaultsButton"),
     saveSignedButton: document.getElementById("saveSignedButton"),
+    saveDateDefaultsButton: document.getElementById("saveDateDefaultsButton"),
+    saveDateEditorButton: document.getElementById("saveDateEditorButton"),
+    settingsModal: document.getElementById("settingsModal"),
+    signatureColorGrid: document.getElementById("signatureColorGrid"),
     signatureCountChip: document.getElementById("signatureCountChip"),
     signatureLibrary: document.getElementById("signatureLibrary"),
     signatureModal: document.getElementById("signatureModal"),
     signatureModalHelp: document.getElementById("signatureModalHelp"),
     signatureNameInput: document.getElementById("signatureNameInput"),
     signaturePrompt: document.getElementById("signaturePrompt"),
-    statusText: document.getElementById("statusText")
+    statusText: document.getElementById("statusText"),
+    typedSignatureFields: document.getElementById("typedSignatureFields"),
+    typedSignatureFontGrid: document.getElementById("typedSignatureFontGrid"),
+    typedSignatureModeButton: document.getElementById("typedSignatureModeButton"),
+    typedSignaturePreview: document.getElementById("typedSignaturePreview"),
+    typedSignatureTextInput: document.getElementById("typedSignatureTextInput")
   };
 }
 
