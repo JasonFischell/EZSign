@@ -43,12 +43,14 @@ async function handleMessage(message, sender) {
 
 async function getBootstrapState() {
   const storage = await chrome.storage.local.get({ queuedRequests: [] });
+  const authState = await getAuthState();
 
   return {
     config: {
       defaultQuery: DEFAULT_QUERY,
       oauthConfigured: isOAuthConfigured(),
-      scopes: chrome.runtime.getManifest().oauth2?.scopes ?? []
+      scopes: chrome.runtime.getManifest().oauth2?.scopes ?? [],
+      authenticatedEmail: authState.authenticatedEmail
     },
     queue: storage.queuedRequests
   };
@@ -137,6 +139,27 @@ async function queueSigningRequest(payload) {
 function isOAuthConfigured() {
   const clientId = chrome.runtime.getManifest().oauth2?.client_id ?? "";
   return Boolean(clientId) && !clientId.startsWith("REPLACE_WITH_");
+}
+
+async function getAuthState() {
+  if (!isOAuthConfigured()) {
+    return {
+      authenticatedEmail: null
+    };
+  }
+
+  try {
+    const token = await getAuthToken(false);
+    const profile = await gmailFetch("/gmail/v1/users/me/profile", token);
+
+    return {
+      authenticatedEmail: profile.emailAddress || null
+    };
+  } catch {
+    return {
+      authenticatedEmail: null
+    };
+  }
 }
 
 async function getAuthToken(interactive) {

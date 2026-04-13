@@ -12,6 +12,7 @@ const results = document.getElementById("results");
 
 const state = {
   oauthConfigured: false,
+  authenticatedEmail: null,
   queue: [],
   results: []
 };
@@ -27,8 +28,12 @@ searchForm.addEventListener("submit", async (event) => {
 });
 
 connectButton.addEventListener("click", async () => {
+  authPill.textContent = "Connecting";
+  authHelp.textContent = "Waiting for Google sign-in...";
+
   try {
     const response = await sendMessage({ type: "authenticate-gmail" });
+    state.authenticatedEmail = response.authenticatedEmail;
     authPill.textContent = "Connected";
     authHelp.textContent = `Authenticated as ${response.authenticatedEmail}`;
   } catch (error) {
@@ -61,10 +66,14 @@ async function initialize() {
   const bootstrap = await sendMessage({ type: "get-bootstrap-state" });
 
   state.oauthConfigured = bootstrap.config.oauthConfigured;
+  state.authenticatedEmail = bootstrap.config.authenticatedEmail;
   state.queue = bootstrap.queue;
   queryInput.value = bootstrap.config.defaultQuery;
 
-  if (state.oauthConfigured) {
+  if (state.authenticatedEmail) {
+    authPill.textContent = "Connected";
+    authHelp.textContent = `Authenticated as ${state.authenticatedEmail}`;
+  } else if (state.oauthConfigured) {
     authPill.textContent = "Ready";
     authHelp.textContent = "OAuth is configured. You can connect Gmail and search live data.";
   } else {
