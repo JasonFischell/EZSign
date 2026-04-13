@@ -37,12 +37,12 @@ connectButton.addEventListener("click", async () => {
   try {
     const response = await sendMessage({ type: "authenticate-gmail" });
     state.authenticatedEmail = response.authenticatedEmail;
-    authPill.textContent = "Connected";
-    authHelp.textContent = `Authenticated as ${response.authenticatedEmail}`;
+    renderAuthState();
     activityMessage.textContent = `Connected Gmail for ${response.authenticatedEmail}.`;
   } catch (error) {
     authPill.textContent = "Needs setup";
     authHelp.textContent = error.message;
+    connectButton.textContent = "Connect Gmail";
     activityMessage.textContent = `Could not connect Gmail: ${error.message}`;
   }
 });
@@ -111,20 +111,30 @@ async function initialize() {
   state.queue = bootstrap.queue;
   queryInput.value = bootstrap.config.defaultQuery;
 
+  renderAuthState();
+  renderQueue();
+  renderResults();
+}
+
+function renderAuthState() {
   if (state.authenticatedEmail) {
     authPill.textContent = "Connected";
     authHelp.textContent = `Authenticated as ${state.authenticatedEmail}`;
-  } else if (state.oauthConfigured) {
-    authPill.textContent = "Ready";
-    authHelp.textContent = "OAuth is configured. You can connect Gmail and search live data.";
-  } else {
-    authPill.textContent = "Needs setup";
-    authHelp.textContent =
-      "Replace the placeholder OAuth client ID in manifest.json, then reload the extension.";
+    connectButton.textContent = "Reconnect Gmail";
+    return;
   }
 
-  renderQueue();
-  renderResults();
+  connectButton.textContent = "Connect Gmail";
+
+  if (state.oauthConfigured) {
+    authPill.textContent = "Ready";
+    authHelp.textContent = "OAuth is configured. You can connect Gmail and search live data.";
+    return;
+  }
+
+  authPill.textContent = "Needs setup";
+  authHelp.textContent =
+    "Replace the placeholder OAuth client ID in manifest.json, then reload the extension.";
 }
 
 async function runSearch({ useMock }) {
@@ -178,6 +188,7 @@ function renderQueue() {
         filename: item.filename,
         mimeType: item.mimeType
       });
+      const buttonLabel = item.status === "downloaded" ? "Download Again" : "Download";
 
       return `
         <article class="queue-card">
@@ -185,23 +196,12 @@ function renderQueue() {
           <p class="metadata">${escapeHtml(item.subject || "Draft signature request")} &middot; ${escapeHtml(item.status)}</p>
           <div class="queue-actions">
             <button class="secondary" data-download-button="true" data-payload='${escapeAttribute(downloadPayload)}' type="button">
-              Download
+              ${buttonLabel}
             </button>
           </div>
         </article>
       `;
     })
-    .join("");
-  return;
-  queueList.innerHTML = state.queue
-    .map(
-      (item) => `
-        <article class="queue-card">
-          <h3>${escapeHtml(item.filename)}</h3>
-          <p class="metadata">${escapeHtml(item.subject || "Draft signature request")} • ${escapeHtml(item.status)}</p>
-        </article>
-      `
-    )
     .join("");
 }
 
@@ -254,46 +254,6 @@ function renderResults() {
         <article class="message-card">
           <h3>${escapeHtml(message.subject)}</h3>
           <p class="metadata">${escapeHtml(message.from)} &middot; ${escapeHtml(message.date || "Unknown date")}</p>
-          <p class="message-snippet">${escapeHtml(message.snippet || "No message snippet available.")}</p>
-          <div class="attachments">${attachmentsMarkup}</div>
-        </article>
-      `;
-    })
-    .join("");
-  return;
-  results.innerHTML = state.results
-    .map((message) => {
-      const attachmentsMarkup = message.attachments
-        .map((attachment) => {
-          const queuePayload = JSON.stringify({
-            messageId: message.messageId,
-            threadId: message.threadId,
-            subject: message.subject,
-            from: message.from,
-            filename: attachment.filename,
-            attachmentId: attachment.attachmentId,
-            mimeType: attachment.mimeType,
-            size: attachment.size
-          });
-
-          return `
-            <div class="attachment-row">
-              <div>
-                <div class="attachment-name">${escapeHtml(attachment.filename)}</div>
-                <div class="attachment-meta">${formatBytes(attachment.size)} • ${escapeHtml(attachment.mimeType)}</div>
-              </div>
-              <button class="queue-button" data-queue-button="true" data-payload='${escapeAttribute(queuePayload)}' type="button">
-                Queue
-              </button>
-            </div>
-          `;
-        })
-        .join("");
-
-      return `
-        <article class="message-card">
-          <h3>${escapeHtml(message.subject)}</h3>
-          <p class="metadata">${escapeHtml(message.from)} • ${escapeHtml(message.date || "Unknown date")}</p>
           <p class="message-snippet">${escapeHtml(message.snippet || "No message snippet available.")}</p>
           <div class="attachments">${attachmentsMarkup}</div>
         </article>

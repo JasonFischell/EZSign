@@ -34,6 +34,8 @@ async function handleMessage(message, sender) {
       return authenticateGmail();
     case "search-signature-requests":
       return searchSignatureRequests(message.payload ?? {});
+    case "download-attachment":
+      return downloadAttachment(message.payload ?? {});
     case "queue-signing-request":
       return queueSigningRequest(message.payload ?? {});
     default:
@@ -136,6 +138,40 @@ async function queueSigningRequest(payload) {
   };
 }
 
+async function downloadAttachment(payload) {
+  const requiredFields = ["messageId", "filename"];
+  for (const field of requiredFields) {
+    if (!payload[field]) {
+      throw new Error(`Missing required field: ${field}`);
+    }
+  }
+
+  if (String(payload.messageId).startsWith("mock-")) {
+    throw new Error("Download is only available for live Gmail attachments.");
+  }
+
+  if (!payload.attachmentId && !payload.partId) {
+    throw new Error("Missing attachment metadata required for download.");
+  }
+
+  const token = await getAuthToken(true);
+  const base64UrlData = await getAttachmentBase64Url(payload, token);
+  const mimeType = payload.mimeType || "application/octet-stream";
+
+  const downloadId = await chrome.downloads.download({
+    url: buildDownloadDataUrl(mimeType, base64UrlData),
+    filename: `EZSign/${sanitizeFilename(payload.filename)}`,
+    saveAs: true
+  });
+
+  const queue = await markQueueItemDownloaded(payload.queueItemId);
+
+  return {
+    downloadId,
+    queue
+  };
+}
+
 function isOAuthConfigured() {
   const clientId = chrome.runtime.getManifest().oauth2?.client_id ?? "";
   return Boolean(clientId) && !clientId.startsWith("REPLACE_WITH_");
@@ -222,6 +258,7 @@ function collectAttachments(part, attachments = []) {
       filename,
       mimeType: part.mimeType || "application/octet-stream",
       attachmentId: part.body?.attachmentId || null,
+      partId: part.partId || null,
       size: part.body?.size || 0
     });
   }
@@ -236,6 +273,92 @@ function collectAttachments(part, attachments = []) {
 function readHeader(headers, name) {
   const header = headers.find((item) => item.name?.toLowerCase() === name.toLowerCase());
   return header?.value ?? "";
+}
+
+async function getAttachmentBase64Url(payload, token) {
+  if (payload.attachmentId) {
+    const attachment = await gmailFetch(
+      `/gmail/v1/users/me/messages/${encodeURIComponent(payload.messageId)}/attachments/${encodeURIComponent(payload.attachmentId)}`,
+      token
+    );
+
+    if (!attachment.data) {
+      throw new Error("Gmail returned an attachment record without file data.");
+    }
+
+    return attachment.data;
+  }
+
+  const message = await gmailFetch(
+    `/gmail/v1/users/me/messages/${encodeURIComponent(payload.messageId)}?format=full`,
+    token
+  );
+  const attachmentPart = findPartById(message.payload, payload.partId);
+
+  if (!attachmentPart?.body?.data) {
+    throw new Error("The selected Gmail attachment could not be downloaded.");
+  }
+
+  return attachmentPart.body.data;
+}
+
+function findPartById(part, partId) {
+  if (!part) {
+    return null;
+  }
+
+  if (part.partId === partId) {
+    return part;
+  }
+
+  for (const childPart of part.parts ?? []) {
+    const match = findPartById(childPart, partId);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function buildDownloadDataUrl(mimeType, base64UrlData) {
+  return `data:${mimeType};base64,${toStandardBase64(base64UrlData)}`;
+}
+
+function toStandardBase64(base64UrlData) {
+  const standardBase64 = String(base64UrlData).replaceAll("-", "+").replaceAll("_", "/");
+  const requiredPadding = (4 - (standardBase64.length % 4)) % 4;
+  return `${standardBase64}${"=".repeat(requiredPadding)}`;
+}
+
+async function markQueueItemDownloaded(queueItemId) {
+  const current = await chrome.storage.local.get({ queuedRequests: [] });
+
+  if (!queueItemId) {
+    return current.queuedRequests;
+  }
+
+  const queuedRequests = current.queuedRequests.map((item) =>
+    item.id === queueItemId
+      ? {
+          ...item,
+          status: "downloaded",
+          downloadedAt: new Date().toISOString()
+        }
+      : item
+  );
+
+  await chrome.storage.local.set({ queuedRequests });
+  return queuedRequests;
+}
+
+function sanitizeFilename(filename) {
+  const cleaned = String(filename)
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+    .replace(/\s+/g, " ");
+
+  return cleaned || "gmail-attachment";
 }
 
 function getMockSearchResults(query) {
@@ -253,6 +376,7 @@ function getMockSearchResults(query) {
           filename: "contractor-agreement.pdf",
           mimeType: "application/pdf",
           attachmentId: "mock-attachment-1",
+          partId: "part-1",
           size: 280144
         }
       ]
@@ -271,6 +395,7 @@ function getMockSearchResults(query) {
           mimeType:
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
           attachmentId: "mock-attachment-2",
+          partId: "part-2",
           size: 143221
         }
       ]

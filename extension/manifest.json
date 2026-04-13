@@ -5,6 +5,7 @@
   "description": "Find Gmail attachments that likely need signatures and route them into EZSign.",
   "minimum_chrome_version": "114",
   "permissions": [
+    "downloads",
     "identity",
     "sidePanel",
     "storage"
