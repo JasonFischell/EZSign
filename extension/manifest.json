@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "EZSign Gmail Assistant",
+  "version": "0.1.0",
+  "description": "Find Gmail attachments that likely need signatures and route them into EZSign.",
+  "minimum_chrome_version": "114",
+  "permissions": [
+    "identity",
+    "sidePanel",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://gmail.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open EZSign"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mail.google.com/*"
+      ],
+      "js": [
+        "content/gmail.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "oauth2": {
+    "client_id": "REPLACE_WITH_GOOGLE_EXTENSION_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.readonly"
+    ]
+  }
+}

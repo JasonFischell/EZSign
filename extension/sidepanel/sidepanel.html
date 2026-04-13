@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EZSign</title>
+    <link rel="stylesheet" href="./sidepanel.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <header class="hero">
+        <p class="eyebrow">EZSign</p>
+        <h1>Find signature-ready documents in Gmail.</h1>
+        <p class="lede">
+          Search Gmail for likely signature requests, review attachments, and queue documents for
+          a validated signing workflow.
+        </p>
+      </header>
+
+      <section class="card">
+        <div class="card-header">
+          <h2>Gmail Access</h2>
+          <span class="pill" id="authPill">Not connected</span>
+        </div>
+        <p class="muted" id="authHelp">
+          Configure OAuth in the manifest to search your real Gmail inbox. Demo data is available
+          right now.
+        </p>
+        <div class="button-row">
+          <button id="connectButton" type="button">Connect Gmail</button>
+          <button class="secondary" id="demoButton" type="button">Load Demo Results</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <h2>Search</h2>
+          <span class="pill subtle" id="sourcePill">Idle</span>
+        </div>
+        <form id="searchForm">
+          <label class="field">
+            <span>Gmail query</span>
+            <textarea
+              id="queryInput"
+              rows="4"
+              placeholder='Example: has:attachment filename:pdf "please sign"'
+            ></textarea>
+          </label>
+          <button id="searchButton" type="submit">Search Gmail</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <h2>Signing Queue</h2>
+          <span class="pill subtle" id="queueCountPill">0 items</span>
+        </div>
+        <div id="queueList" class="stack empty-state">No documents have been queued yet.</div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <h2>Matches</h2>
+          <span class="pill subtle" id="resultsCountPill">0 found</span>
+        </div>
+        <div id="results" class="stack empty-state">Run a search or load demo results.</div>
+      </section>
+    </main>
+
+    <script src="./sidepanel.js"></script>
+  </body>
+</html>
