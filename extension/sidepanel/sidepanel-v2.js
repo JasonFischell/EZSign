@@ -70,20 +70,59 @@ async function handlePanelActionClick(event) {
   }
 
   const downloadButton = event.target.closest("[data-download-button]");
-  if (!downloadButton) {
+  if (downloadButton) {
+    const originalText = downloadButton.textContent;
+    const payload = JSON.parse(downloadButton.dataset.payload);
+
+    downloadButton.disabled = true;
+    downloadButton.textContent = "Downloading...";
+    activityMessage.textContent = `Downloading ${payload.filename}...`;
+
+    try {
+      const response = await sendMessage({
+        type: "download-attachment",
+        payload
+      });
+
+      if (Array.isArray(response.queue)) {
+        state.queue = response.queue;
+        renderQueue();
+      }
+
+      if (response.canceled) {
+        activityMessage.textContent = `Download canceled for ${payload.filename}.`;
+      } else {
+        activityMessage.textContent = response.openedViewer
+          ? `Saved and opened ${payload.filename} in Chrome.`
+          : `Saved ${payload.filename} from Gmail.`;
+      }
+    } catch (error) {
+      activityMessage.textContent = `Could not download ${payload.filename}: ${error.message}`;
+    } finally {
+      if (downloadButton.isConnected) {
+        downloadButton.disabled = false;
+        downloadButton.textContent = originalText;
+      }
+    }
+
     return;
   }
 
-  const originalText = downloadButton.textContent;
-  const payload = JSON.parse(downloadButton.dataset.payload);
+  const openButton = event.target.closest("[data-open-button]");
+  if (!openButton) {
+    return;
+  }
 
-  downloadButton.disabled = true;
-  downloadButton.textContent = "Downloading...";
-  activityMessage.textContent = `Downloading ${payload.filename}...`;
+  const originalText = openButton.textContent;
+  const payload = JSON.parse(openButton.dataset.payload);
+
+  openButton.disabled = true;
+  openButton.textContent = "Opening...";
+  activityMessage.textContent = `Opening ${payload.filename} in Chrome...`;
 
   try {
     const response = await sendMessage({
-      type: "download-attachment",
+      type: "open-attachment-preview",
       payload
     });
 
@@ -92,13 +131,13 @@ async function handlePanelActionClick(event) {
       renderQueue();
     }
 
-    activityMessage.textContent = `Saved ${payload.filename} from Gmail.`;
+    activityMessage.textContent = `Opened ${payload.filename} in Chrome.`;
   } catch (error) {
-    activityMessage.textContent = `Could not download ${payload.filename}: ${error.message}`;
+    activityMessage.textContent = `Could not open ${payload.filename}: ${error.message}`;
   } finally {
-    if (downloadButton.isConnected) {
-      downloadButton.disabled = false;
-      downloadButton.textContent = originalText;
+    if (openButton.isConnected) {
+      openButton.disabled = false;
+      openButton.textContent = originalText;
     }
   }
 }
@@ -186,15 +225,24 @@ function renderQueue() {
         attachmentId: item.attachmentId,
         partId: item.partId,
         filename: item.filename,
-        mimeType: item.mimeType
+        mimeType: item.mimeType,
+        previewCacheKey: item.previewCacheKey || null
       });
       const buttonLabel = item.status === "downloaded" ? "Download Again" : "Download";
+      const showOpenButton =
+        item.status === "downloaded" &&
+        String(item.filename || "").toLowerCase().endsWith(".pdf");
 
       return `
         <article class="queue-card">
           <h3>${escapeHtml(item.filename)}</h3>
           <p class="metadata">${escapeHtml(item.subject || "Draft signature request")} &middot; ${escapeHtml(item.status)}</p>
           <div class="queue-actions">
+            ${showOpenButton
+              ? `<button class="secondary" data-open-button="true" data-payload='${escapeAttribute(downloadPayload)}' type="button">
+              Open
+            </button>`
+              : ""}
             <button class="secondary" data-download-button="true" data-payload='${escapeAttribute(downloadPayload)}' type="button">
               ${buttonLabel}
             </button>

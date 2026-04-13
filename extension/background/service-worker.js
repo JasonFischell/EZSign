@@ -1,6 +1,8 @@
 const DEFAULT_QUERY = 'has:attachment "please sign"';
 
 const SUPPORTED_EXTENSIONS = new Set(["pdf", "doc", "docx"]);
+const PDF_PREVIEW_STORAGE_PREFIX = "pdfPreview:";
+const MAX_PDF_PREVIEWS = 10;
 
 chrome.runtime.onInstalled.addListener(async () => {
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -34,6 +36,8 @@ async function handleMessage(message, sender) {
       return authenticateGmail();
     case "search-signature-requests":
       return searchSignatureRequests(message.payload ?? {});
+    case "open-attachment-preview":
+      return openAttachmentPreview(message.payload ?? {});
     case "download-attachment":
       return downloadAttachment(message.payload ?? {});
     case "queue-signing-request":
@@ -157,6 +161,7 @@ async function downloadAttachment(payload) {
   const token = await getAuthToken(true);
   const base64UrlData = await getAttachmentBase64Url(payload, token);
   const mimeType = payload.mimeType || "application/octet-stream";
+  const shouldOpenPdfViewer = isPdfAttachment(payload.filename, mimeType);
 
   const downloadId = await chrome.downloads.download({
     url: buildDownloadDataUrl(mimeType, base64UrlData),
@@ -164,10 +169,85 @@ async function downloadAttachment(payload) {
     saveAs: true
   });
 
-  const queue = await markQueueItemDownloaded(payload.queueItemId);
+  const downloadItem = await waitForDownloadTerminalState(downloadId);
+  if (downloadItem.state !== "complete") {
+    return {
+      downloadId,
+      viewerTabId: null,
+      openedViewer: false,
+      canceled: true,
+      queue: await getQueuedRequests()
+    };
+  }
+
+  let previewCacheKey = null;
+  let viewerTabId = null;
+  if (shouldOpenPdfViewer) {
+    previewCacheKey = await cachePdfPreview({
+      filename: payload.filename,
+      mimeType,
+      base64UrlData
+    });
+    viewerTabId = await openPdfPreviewTab(previewCacheKey);
+  }
+
+  const queue = await markQueueItemDownloaded(payload.queueItemId, {
+    previewCacheKey,
+    filename: downloadItem.filename || null
+  });
 
   return {
     downloadId,
+    viewerTabId,
+    openedViewer: shouldOpenPdfViewer,
+    canceled: false,
+    queue
+  };
+}
+
+async function openAttachmentPreview(payload) {
+  const requiredFields = ["messageId", "filename"];
+  for (const field of requiredFields) {
+    if (!payload[field]) {
+      throw new Error(`Missing required field: ${field}`);
+    }
+  }
+
+  if (!isPdfAttachment(payload.filename, payload.mimeType || "")) {
+    throw new Error("Preview open is currently only available for PDF files.");
+  }
+
+  if (payload.previewCacheKey) {
+    const storedPreview = await chrome.storage.session.get(payload.previewCacheKey);
+    if (storedPreview[payload.previewCacheKey]) {
+      const viewerTabId = await openPdfPreviewTab(payload.previewCacheKey);
+      return {
+        viewerTabId,
+        queue: await getQueuedRequests()
+      };
+    }
+  }
+
+  if (String(payload.messageId).startsWith("mock-")) {
+    throw new Error("Open is only available for live Gmail PDF attachments.");
+  }
+
+  if (!payload.attachmentId && !payload.partId) {
+    throw new Error("Missing attachment metadata required to reopen this PDF.");
+  }
+
+  const token = await getAuthToken(true);
+  const base64UrlData = await getAttachmentBase64Url(payload, token);
+  const previewCacheKey = await cachePdfPreview({
+    filename: payload.filename,
+    mimeType: payload.mimeType || "application/pdf",
+    base64UrlData
+  });
+  const viewerTabId = await openPdfPreviewTab(previewCacheKey);
+  const queue = await updateQueueItemPreviewKey(payload.queueItemId, previewCacheKey);
+
+  return {
+    viewerTabId,
     queue
   };
 }
@@ -331,25 +411,50 @@ function toStandardBase64(base64UrlData) {
   return `${standardBase64}${"=".repeat(requiredPadding)}`;
 }
 
-async function markQueueItemDownloaded(queueItemId) {
-  const current = await chrome.storage.local.get({ queuedRequests: [] });
-
+async function markQueueItemDownloaded(queueItemId, metadata = {}) {
+  const current = await getQueuedRequests();
   if (!queueItemId) {
-    return current.queuedRequests;
+    return current;
   }
 
-  const queuedRequests = current.queuedRequests.map((item) =>
+  const queuedRequests = current.map((item) =>
     item.id === queueItemId
       ? {
           ...item,
           status: "downloaded",
-          downloadedAt: new Date().toISOString()
+          downloadedAt: new Date().toISOString(),
+          previewCacheKey: metadata.previewCacheKey || item.previewCacheKey || null,
+          downloadedFilename: metadata.filename || item.downloadedFilename || null
         }
       : item
   );
 
   await chrome.storage.local.set({ queuedRequests });
   return queuedRequests;
+}
+
+async function updateQueueItemPreviewKey(queueItemId, previewCacheKey) {
+  const current = await getQueuedRequests();
+  if (!queueItemId) {
+    return current;
+  }
+
+  const queuedRequests = current.map((item) =>
+    item.id === queueItemId
+      ? {
+          ...item,
+          previewCacheKey
+        }
+      : item
+  );
+
+  await chrome.storage.local.set({ queuedRequests });
+  return queuedRequests;
+}
+
+async function getQueuedRequests() {
+  const current = await chrome.storage.local.get({ queuedRequests: [] });
+  return current.queuedRequests;
 }
 
 function sanitizeFilename(filename) {
@@ -359,6 +464,72 @@ function sanitizeFilename(filename) {
     .replace(/\s+/g, " ");
 
   return cleaned || "gmail-attachment";
+}
+
+function isPdfAttachment(filename, mimeType) {
+  return String(mimeType).toLowerCase().includes("pdf") || String(filename).toLowerCase().endsWith(".pdf");
+}
+
+async function cachePdfPreview({ filename, mimeType, base64UrlData }) {
+  const cacheKey = `${PDF_PREVIEW_STORAGE_PREFIX}${crypto.randomUUID()}`;
+  await chrome.storage.session.set({
+    [cacheKey]: {
+      filename,
+      mimeType,
+      base64UrlData,
+      createdAt: Date.now()
+    }
+  });
+  await prunePdfPreviewCache();
+  return cacheKey;
+}
+
+async function openPdfPreviewTab(cacheKey) {
+  const tab = await chrome.tabs.create({
+    url: chrome.runtime.getURL(`viewer/pdf-viewer.html?cacheKey=${encodeURIComponent(cacheKey)}`)
+  });
+
+  return tab?.id ?? null;
+}
+
+async function prunePdfPreviewCache() {
+  const allSessionItems = await chrome.storage.session.get(null);
+  const previewEntries = Object.entries(allSessionItems)
+    .filter(([key]) => key.startsWith(PDF_PREVIEW_STORAGE_PREFIX))
+    .sort(([, left], [, right]) => Number(left?.createdAt || 0) - Number(right?.createdAt || 0));
+
+  if (previewEntries.length <= MAX_PDF_PREVIEWS) {
+    return;
+  }
+
+  const keysToRemove = previewEntries
+    .slice(0, previewEntries.length - MAX_PDF_PREVIEWS)
+    .map(([key]) => key);
+
+  await chrome.storage.session.remove(keysToRemove);
+}
+
+async function waitForDownloadTerminalState(downloadId) {
+  const existing = await chrome.downloads.search({ id: downloadId });
+  if (existing[0]?.state === "complete" || existing[0]?.state === "interrupted") {
+    return existing[0];
+  }
+
+  return new Promise((resolve) => {
+    const handleChange = async (delta) => {
+      if (delta.id !== downloadId) {
+        return;
+      }
+
+      if (delta.state?.current === "complete" || delta.state?.current === "interrupted") {
+        chrome.downloads.onChanged.removeListener(handleChange);
+        const latest = await chrome.downloads.search({ id: downloadId });
+        resolve(latest[0] || { id: downloadId, state: delta.state.current });
+      }
+    };
+
+    chrome.downloads.onChanged.addListener(handleChange);
+  });
 }
 
 function getMockSearchResults(query) {
