@@ -18,6 +18,15 @@ const state = {
   results: []
 };
 
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes.queuedRequests) {
+    return;
+  }
+
+  state.queue = Array.isArray(changes.queuedRequests.newValue) ? changes.queuedRequests.newValue : [];
+  renderQueue();
+});
+
 initialize().catch((error) => {
   authPill.textContent = "Error";
   authHelp.textContent = error.message;
@@ -93,7 +102,7 @@ async function handlePanelActionClick(event) {
         activityMessage.textContent = `Download canceled for ${payload.filename}.`;
       } else {
         activityMessage.textContent = response.openedViewer
-          ? `Saved and opened ${payload.filename} in Chrome.`
+          ? `Saved and opened ${payload.filename} in the signing workspace.`
           : `Saved ${payload.filename} from Gmail.`;
       }
     } catch (error) {
@@ -118,7 +127,7 @@ async function handlePanelActionClick(event) {
 
   openButton.disabled = true;
   openButton.textContent = "Opening...";
-  activityMessage.textContent = `Opening ${payload.filename} in Chrome...`;
+  activityMessage.textContent = `Opening ${payload.filename} in the signing workspace...`;
 
   try {
     const response = await sendMessage({
@@ -131,7 +140,7 @@ async function handlePanelActionClick(event) {
       renderQueue();
     }
 
-    activityMessage.textContent = `Opened ${payload.filename} in Chrome.`;
+    activityMessage.textContent = `Opened ${payload.filename} in the signing workspace.`;
   } catch (error) {
     activityMessage.textContent = `Could not open ${payload.filename}: ${error.message}`;
   } finally {
@@ -219,24 +228,27 @@ function renderQueue() {
   queueList.className = "stack";
   queueList.innerHTML = state.queue
     .map((item) => {
+      const displayFilename =
+        item.status === "signed" && item.signedFilename ? item.signedFilename : item.filename;
       const downloadPayload = JSON.stringify({
         queueItemId: item.id,
         messageId: item.messageId,
         attachmentId: item.attachmentId,
         partId: item.partId,
-        filename: item.filename,
+        filename: displayFilename,
         mimeType: item.mimeType,
         previewCacheKey: item.previewCacheKey || null
       });
-      const buttonLabel = item.status === "downloaded" ? "Download Again" : "Download";
+      const buttonLabel = item.status === "downloaded" || item.status === "signed" ? "Download Again" : "Download";
       const showOpenButton =
-        item.status === "downloaded" &&
+        (item.status === "downloaded" || item.status === "signed") &&
         String(item.filename || "").toLowerCase().endsWith(".pdf");
+      const statusLabel = item.status === "signed" ? "signed copy ready" : item.status;
 
       return `
         <article class="queue-card">
-          <h3>${escapeHtml(item.filename)}</h3>
-          <p class="metadata">${escapeHtml(item.subject || "Draft signature request")} &middot; ${escapeHtml(item.status)}</p>
+          <h3>${escapeHtml(displayFilename)}</h3>
+          <p class="metadata">${escapeHtml(item.subject || "Draft signature request")} &middot; ${escapeHtml(statusLabel)}</p>
           <div class="queue-actions">
             ${showOpenButton
               ? `<button class="secondary" data-open-button="true" data-payload='${escapeAttribute(downloadPayload)}' type="button">

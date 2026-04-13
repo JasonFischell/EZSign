@@ -3,112 +3,110 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EZSign PDF Viewer</title>
-    <style>
-      :root {
-        color-scheme: light;
-        --bg: #eef4f5;
-        --panel: #ffffff;
-        --border: #d7e3e6;
-        --text: #102126;
-        --muted: #5f7179;
-        --accent: #0f766e;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      body {
-        margin: 0;
-        min-height: 100vh;
-        background:
-          radial-gradient(circle at top right, rgba(14, 165, 233, 0.16), transparent 28%),
-          linear-gradient(180deg, #edf5f6 0%, var(--bg) 100%);
-        color: var(--text);
-        font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
-      }
-
-      .layout {
-        display: grid;
-        gap: 16px;
-        min-height: 100vh;
-        padding: 20px;
-      }
-
-      .panel {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 18px;
-        padding: 18px;
-      }
-
-      .header {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 12px;
-      }
-
-      .eyebrow {
-        margin: 0 0 6px;
-        color: var(--accent);
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-
-      h1 {
-        margin: 0;
-        font-size: 22px;
-      }
-
-      .muted {
-        color: var(--muted);
-      }
-
-      .viewer-shell {
-        background: #ffffff;
-        border: 1px solid var(--border);
-        border-radius: 18px;
-        min-height: calc(100vh - 180px);
-        overflow: hidden;
-      }
-
-      iframe {
-        border: 0;
-        display: block;
-        height: calc(100vh - 182px);
-        width: 100%;
-      }
-
-      .error {
-        align-items: center;
-        display: grid;
-        min-height: calc(100vh - 182px);
-        padding: 24px;
-      }
-    </style>
+    <title>EZSign Signing Workspace</title>
+    <link rel="stylesheet" href="./pdf-viewer.css" />
+    <script src="../vendor/pdf-lib/pdf-lib.min.js"></script>
   </head>
   <body>
-    <main class="layout">
-      <section class="panel header">
-        <div>
-          <p class="eyebrow">EZSign PDF</p>
-          <h1 id="fileName">Opening PDF...</h1>
+    <main class="workspace">
+      <aside class="sidebar panel">
+        <div class="sidebar-copy">
+          <p class="eyebrow">EZSign Signer</p>
+          <h1 id="fileName">Loading document...</h1>
+          <p class="muted" id="statusText">Preparing the signing workspace.</p>
         </div>
-        <p class="muted" id="statusText">Preparing Chrome PDF preview.</p>
-      </section>
 
-      <section class="viewer-shell">
-        <iframe id="pdfFrame" title="PDF preview"></iframe>
-        <div class="error muted" id="errorState" hidden>
-          The PDF preview could not be loaded.
+        <div class="chip-row">
+          <span class="chip" id="signatureCountChip">0 signatures</span>
+          <span class="chip subtle" id="placementCountChip">0 placed</span>
         </div>
+
+        <section class="prompt-card" id="signaturePrompt" hidden>
+          <h2>Draw your first signature</h2>
+          <p>
+            This workspace stores signatures inside the extension, so you can drag them onto any
+            open PDF.
+          </p>
+          <button id="promptAddSignatureButton" type="button">Add Signature</button>
+        </section>
+
+        <section class="panel inset">
+          <div class="section-header">
+            <h2>Stored Signatures</h2>
+            <button class="secondary" id="addSignatureButton" type="button">Add Signature</button>
+          </div>
+          <div class="signature-library" id="signatureLibrary">
+            No signatures stored yet.
+          </div>
+        </section>
+
+        <section class="panel inset tips">
+          <h2>How It Works</h2>
+          <p>Drag a saved signature onto the page where it belongs.</p>
+          <p>Use Open later to return to this workspace without downloading the PDF again.</p>
+          <p>Save Signed Copy exports a fresh PDF with the placed signatures embedded.</p>
+        </section>
+      </aside>
+
+      <section class="document-shell">
+        <header class="toolbar panel">
+          <div>
+            <p class="eyebrow">Signing Workspace</p>
+            <h2>Review, place, and export</h2>
+          </div>
+          <div class="toolbar-actions">
+            <button class="secondary" id="clearPlacementsButton" type="button" disabled>
+              Clear Placements
+            </button>
+            <button id="saveSignedButton" type="button" disabled>Save Signed Copy</button>
+          </div>
+        </header>
+
+        <section class="pages-shell panel">
+          <div class="document-hint" id="documentHint">
+            Rendering your PDF. This usually takes a moment.
+          </div>
+          <div class="pages-container" id="pagesContainer"></div>
+          <div class="error-state" id="errorState" hidden></div>
+        </section>
       </section>
     </main>
 
-    <script src="./pdf-viewer.js"></script>
+    <div class="modal-backdrop" id="signatureModal" hidden>
+      <section class="modal-panel" aria-labelledby="signatureModalTitle" aria-modal="true" role="dialog">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Signature Capture</p>
+            <h2 id="signatureModalTitle">Add a hand-drawn signature</h2>
+          </div>
+          <button class="icon-button" id="closeModalButton" type="button" aria-label="Close signature dialog">
+            x
+          </button>
+        </div>
+
+        <label class="field">
+          <span>Signature name</span>
+          <input id="signatureNameInput" type="text" maxlength="40" placeholder="Example: Jason Primary" />
+        </label>
+
+        <div class="signature-pad-shell">
+          <canvas id="signaturePad" width="640" height="240"></canvas>
+        </div>
+
+        <p class="muted modal-help" id="signatureModalHelp">
+          Sign with your mouse, trackpad, or stylus. We will store this inside the extension.
+        </p>
+
+        <div class="modal-actions">
+          <button class="secondary" id="clearSignaturePadButton" type="button">Clear</button>
+          <button class="secondary" id="cancelSignatureButton" type="button">Close</button>
+          <button id="saveSignatureButton" type="button">Save Signature</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="placement-tooltip" id="placementTooltip" hidden>Click to place signature</div>
+
+    <script type="module" src="./pdf-viewer.js"></script>
   </body>
 </html>

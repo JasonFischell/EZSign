@@ -1,0 +1,13 @@
+{
+  "name": "ezsign",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension for Gmail-based document signing workflows.",
+  "scripts": {
+    "vendor:copy": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/copy-vendor.ps1"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.5.136"
+  }
+}

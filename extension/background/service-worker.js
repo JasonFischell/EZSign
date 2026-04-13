@@ -7,9 +7,19 @@ const MAX_PDF_PREVIEWS = 10;
 chrome.runtime.onInstalled.addListener(async () => {
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
-  const existing = await chrome.storage.local.get({ queuedRequests: [] });
+  const existing = await chrome.storage.local.get({ queuedRequests: [], savedSignatures: [] });
+  const updates = {};
+
   if (!Array.isArray(existing.queuedRequests)) {
-    await chrome.storage.local.set({ queuedRequests: [] });
+    updates.queuedRequests = [];
+  }
+
+  if (!Array.isArray(existing.savedSignatures)) {
+    updates.savedSignatures = [];
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await chrome.storage.local.set(updates);
   }
 });
 
@@ -158,14 +168,21 @@ async function downloadAttachment(payload) {
     throw new Error("Missing attachment metadata required for download.");
   }
 
-  const token = await getAuthToken(true);
-  const base64UrlData = await getAttachmentBase64Url(payload, token);
-  const mimeType = payload.mimeType || "application/octet-stream";
-  const shouldOpenPdfViewer = isPdfAttachment(payload.filename, mimeType);
+  const cachedPreview = payload.previewCacheKey
+    ? (await chrome.storage.session.get(payload.previewCacheKey))[payload.previewCacheKey] || null
+    : null;
+
+  const token = cachedPreview ? null : await getAuthToken(true);
+  const base64UrlData = cachedPreview
+    ? cachedPreview.base64UrlData
+    : await getAttachmentBase64Url(payload, token);
+  const mimeType = cachedPreview?.mimeType || payload.mimeType || "application/octet-stream";
+  const downloadFilename = cachedPreview?.filename || payload.filename;
+  const shouldOpenPdfViewer = isPdfAttachment(downloadFilename, mimeType);
 
   const downloadId = await chrome.downloads.download({
     url: buildDownloadDataUrl(mimeType, base64UrlData),
-    filename: `EZSign/${sanitizeFilename(payload.filename)}`,
+    filename: `EZSign/${sanitizeFilename(downloadFilename)}`,
     saveAs: true
   });
 
@@ -183,16 +200,22 @@ async function downloadAttachment(payload) {
   let previewCacheKey = null;
   let viewerTabId = null;
   if (shouldOpenPdfViewer) {
-    previewCacheKey = await cachePdfPreview({
-      filename: payload.filename,
-      mimeType,
-      base64UrlData
-    });
+    previewCacheKey =
+      cachedPreview && payload.previewCacheKey
+        ? payload.previewCacheKey
+        : await cachePdfPreview({
+            filename: downloadFilename,
+            mimeType,
+            base64UrlData,
+            queueItemId: payload.queueItemId || null,
+            sourceMessageId: payload.messageId
+          });
     viewerTabId = await openPdfPreviewTab(previewCacheKey);
   }
 
   const queue = await markQueueItemDownloaded(payload.queueItemId, {
     previewCacheKey,
+    status: cachedPreview?.lastSignedAt ? "signed" : undefined,
     filename: downloadItem.filename || null
   });
 
@@ -241,7 +264,9 @@ async function openAttachmentPreview(payload) {
   const previewCacheKey = await cachePdfPreview({
     filename: payload.filename,
     mimeType: payload.mimeType || "application/pdf",
-    base64UrlData
+    base64UrlData,
+    queueItemId: payload.queueItemId || null,
+    sourceMessageId: payload.messageId
   });
   const viewerTabId = await openPdfPreviewTab(previewCacheKey);
   const queue = await updateQueueItemPreviewKey(payload.queueItemId, previewCacheKey);
@@ -421,7 +446,7 @@ async function markQueueItemDownloaded(queueItemId, metadata = {}) {
     item.id === queueItemId
       ? {
           ...item,
-          status: "downloaded",
+          status: metadata.status || (item.status === "signed" ? "signed" : "downloaded"),
           downloadedAt: new Date().toISOString(),
           previewCacheKey: metadata.previewCacheKey || item.previewCacheKey || null,
           downloadedFilename: metadata.filename || item.downloadedFilename || null
@@ -470,13 +495,15 @@ function isPdfAttachment(filename, mimeType) {
   return String(mimeType).toLowerCase().includes("pdf") || String(filename).toLowerCase().endsWith(".pdf");
 }
 
-async function cachePdfPreview({ filename, mimeType, base64UrlData }) {
+async function cachePdfPreview({ filename, mimeType, base64UrlData, queueItemId = null, sourceMessageId = null }) {
   const cacheKey = `${PDF_PREVIEW_STORAGE_PREFIX}${crypto.randomUUID()}`;
   await chrome.storage.session.set({
     [cacheKey]: {
       filename,
       mimeType,
       base64UrlData,
+      queueItemId,
+      sourceMessageId,
       createdAt: Date.now()
     }
   });
@@ -485,11 +512,25 @@ async function cachePdfPreview({ filename, mimeType, base64UrlData }) {
 }
 
 async function openPdfPreviewTab(cacheKey) {
+  const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   const tab = await chrome.tabs.create({
     url: chrome.runtime.getURL(`viewer/pdf-viewer.html?cacheKey=${encodeURIComponent(cacheKey)}`)
   });
+  await maybeCloseSidePanel(activeTab?.windowId ?? tab?.windowId ?? null);
 
   return tab?.id ?? null;
+}
+
+async function maybeCloseSidePanel(windowId) {
+  if (!windowId || typeof chrome.sidePanel?.close !== "function") {
+    return;
+  }
+
+  try {
+    await chrome.sidePanel.close({ windowId });
+  } catch {
+    // Older Chrome builds can lack close(), and close failures should not block the workspace.
+  }
 }
 
 async function prunePdfPreviewCache() {
