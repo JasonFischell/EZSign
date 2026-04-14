@@ -1,5 +1,6 @@
 export function createSignaturePad(canvas) {
   const context = canvas.getContext("2d");
+  const listeners = new Set();
   const state = {
     drawing: false,
     hasInk: false,
@@ -16,7 +17,9 @@ export function createSignaturePad(canvas) {
   return {
     clear: reset,
     exportSignature,
-    setColor
+    setColor,
+    recolor,
+    subscribe
   };
 
   function reset() {
@@ -28,11 +31,51 @@ export function createSignaturePad(canvas) {
     state.drawing = false;
     state.hasInk = false;
     state.lastPoint = null;
+    notifyChange();
   }
 
   function setColor(color) {
     canvas.dataset.signatureColor = color;
     context.strokeStyle = color;
+    notifyChange();
+  }
+
+  function recolor(color) {
+    canvas.dataset.signatureColor = color;
+    context.strokeStyle = color;
+
+    if (!state.hasInk) {
+      notifyChange();
+      return;
+    }
+
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const { data } = imageData;
+    const [red, green, blue] = hexToRgb(color);
+
+    for (let index = 0; index < data.length; index += 4) {
+      if (data[index + 3] === 0) {
+        continue;
+      }
+
+      data[index] = red;
+      data[index + 1] = green;
+      data[index + 2] = blue;
+    }
+
+    context.putImageData(imageData, 0, 0);
+    notifyChange();
+  }
+
+  function subscribe(listener) {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  }
+
+  function notifyChange() {
+    for (const listener of listeners) {
+      listener();
+    }
   }
 
   function handlePointerDown(event) {
@@ -67,6 +110,7 @@ export function createSignaturePad(canvas) {
     } catch {
       // Pointer capture may already be released when the cursor leaves the canvas.
     }
+    notifyChange();
   }
 
   function getPoint(event) {
@@ -125,5 +169,21 @@ export function createSignaturePad(canvas) {
       width: sourceWidth,
       height: sourceHeight
     };
+  }
+
+  function hexToRgb(hexColor) {
+    const normalized = String(hexColor).replace("#", "");
+    const value = normalized.length === 3
+      ? normalized
+          .split("")
+          .map((char) => char + char)
+          .join("")
+      : normalized;
+
+    return [
+      Number.parseInt(value.slice(0, 2), 16),
+      Number.parseInt(value.slice(2, 4), 16),
+      Number.parseInt(value.slice(4, 6), 16)
+    ];
   }
 }

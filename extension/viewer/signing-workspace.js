@@ -8,8 +8,10 @@ const MAX_RENDER_WIDTH = 920;
 const MIN_RENDER_WIDTH = 540;
 const POINTER_DRAG_THRESHOLD = 8;
 const DATE_TEXT_PADDING_X = 18;
-const DATE_TEXT_PADDING_Y = 14;
-const DEFAULT_DATE_FONT_SIZE = 26;
+const DATE_TEXT_PADDING_Y = 10;
+const DEFAULT_DATE_FONT_SIZE = 18;
+const MIN_DATE_FONT_SIZE = 12;
+const MAX_DATE_FONT_SIZE = 22;
 const COLOR_OPTIONS = {
   black: { label: "Black", value: "#111111" },
   blue: { label: "Blue", value: "#1f5cb8" },
@@ -45,6 +47,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     signatures: [],
     placements: [],
     pageLayouts: [],
+    pageTextAnchors: [],
     pageElements: new Map(),
     activeSignatureId: null,
     selectedPlacementId: null,
@@ -60,13 +63,18 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     selectedTypedFont: TYPED_FONT_OPTIONS[0],
     currentSettings: {
       signatureColor: "black",
-      dateFormat: "long"
+      dateFormat: "long",
+      dateColor: "black"
     },
+    settingsSnapshot: null,
     savedPreferences: {
       signatureColor: "black",
-      dateFormat: "long"
+      dateFormat: "long",
+      dateColor: "black"
     },
-    dateEditorPlacementId: null
+    dateEditorPlacementId: null,
+    signatureEditorPlacementId: null,
+    signatureEditorDraftColor: null
   };
 
   let signaturePad = null;
@@ -74,6 +82,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
   return {
     attachSignaturePad(pad) {
       signaturePad = pad;
+      signaturePad?.subscribe?.(() => renderTypedSignaturePreview());
     },
     async initialize() {
       if (!pdfLib?.PDFDocument) {
@@ -95,10 +104,14 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
   function bindEvents() {
     ui.openSettingsButton.addEventListener("click", openSettingsModal);
     ui.closeSettingsButton.addEventListener("click", closeSettingsModal);
+    ui.cancelSettingsButton.addEventListener("click", closeSettingsModal);
+    ui.saveSettingsButton.addEventListener("click", () => void saveSettingsChanges());
     ui.saveSignatureDefaultsButton.addEventListener("click", () => saveDefaultSetting("signatureColor"));
-    ui.saveDateDefaultsButton.addEventListener("click", () => saveDefaultSetting("dateFormat"));
+    ui.saveDateDefaultsButton.addEventListener("click", () => saveDefaultSetting("dateSettings"));
     ui.signatureColorGrid.addEventListener("click", handleSettingsClick);
     ui.dateFormatGrid.addEventListener("click", handleSettingsClick);
+    ui.dateColorGrid.addEventListener("click", handleSettingsClick);
+    ui.signatureCaptureColorGrid.addEventListener("click", handleCaptureColorSelection);
     ui.addSignatureButton.addEventListener("click", () => openSignatureModal(false));
     ui.promptAddSignatureButton.addEventListener("click", () => openSignatureModal(true));
     ui.closeModalButton.addEventListener("click", closeSignatureModal);
@@ -123,6 +136,12 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     ui.cancelDateEditorButton.addEventListener("click", closeDateEditorModal);
     ui.saveDateEditorButton.addEventListener("click", applyDatePlacementChanges);
     ui.dateEditorFormatGrid.addEventListener("click", handleDateEditorFormatSelection);
+    ui.dateEditorColorGrid.addEventListener("click", handleDateEditorColorSelection);
+    ui.dateEditorInput.addEventListener("input", renderDateEditorFormatExamples);
+    ui.closeSignatureEditorButton.addEventListener("click", closeSignatureEditorModal);
+    ui.cancelSignatureEditorButton.addEventListener("click", closeSignatureEditorModal);
+    ui.saveSignatureEditorButton.addEventListener("click", () => void applySignaturePlacementChanges());
+    ui.signatureEditorColorGrid.addEventListener("click", handleSignatureEditorColorSelection);
     window.addEventListener("pointermove", handleGlobalPointerMove);
     window.addEventListener("pointerup", handleGlobalPointerUp);
     window.addEventListener("pointercancel", cancelPointerSession);
@@ -151,6 +170,11 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
 
       if (!ui.dateEditorModal.hidden) {
         closeDateEditorModal();
+        return;
+      }
+
+      if (!ui.signatureEditorModal.hidden) {
+        closeSignatureEditorModal();
       }
     });
   }
@@ -180,7 +204,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
   }
 
   function renderSignatureLibrary() {
-    ui.signatureCountChip.textContent = `${state.signatures.length} signature${state.signatures.length === 1 ? "" : "s"}`;
+    ui.storedSignatureMeta.textContent = `${state.signatures.length} signature${state.signatures.length === 1 ? "" : "s"} stored`;
     ui.signaturePrompt.hidden = state.signatures.length > 0;
 
     if (state.signatures.length === 0) {
@@ -252,11 +276,12 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
   async function saveSignature() {
     const baseName = ui.signatureNameInput.value.trim() || defaultSignatureName();
     const uniqueName = makeUniqueSignatureName(baseName);
-    const signature = state.signatureInputMode === "typed" ? buildTypedSignatureAsset() : signaturePad.exportSignature();
+    const signature =
+      state.signatureInputMode === "typed" ? buildTypedSignatureAsset() : buildDrawnSignatureAsset();
     if (!signature) {
       ui.signatureModalHelp.textContent =
         state.signatureInputMode === "typed"
-          ? "Enter the typed signature text before saving it."
+          ? "Enter signature text before saving it."
           : "Draw the signature before saving it.";
       return;
     }
@@ -293,6 +318,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     renderTypedFontSelection();
     setSignatureInputMode("drawn");
     signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
+    renderCaptureColorSelection();
     ui.signatureModalHelp.textContent = force
       ? "No saved signatures were found, so add one now to start signing this PDF."
       : "Sign with your mouse, trackpad, stylus, or typed text. We will store this inside the extension.";
@@ -405,7 +431,8 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
 
     if (
       event.target.closest("[data-remove-placement-id]") ||
-      event.target.closest("[data-edit-date-placement-id]")
+      event.target.closest("[data-edit-date-placement-id]") ||
+      event.target.closest("[data-edit-signature-placement-id]")
     ) {
       return;
     }
@@ -476,6 +503,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     ui.pagesContainer.replaceChildren();
     state.pageElements.clear();
     state.pageLayouts = [];
+    state.pageTextAnchors = [];
 
     const pdfDocument = await pdfjsLib.getDocument({ data: state.documentBytes.slice() }).promise;
     const targetWidth = Math.max(MIN_RENDER_WIDTH, Math.min(MAX_RENDER_WIDTH, (ui.pagesContainer.clientWidth || window.innerWidth) - 40));
@@ -491,6 +519,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       const viewport = page.getViewport({ scale: Math.max(0.7, Math.min(1.5, targetWidth / baseViewport.width)) });
       const pageView = buildPageView(pageNumber, viewport);
       state.pageLayouts[pageNumber - 1] = { width: viewport.width, height: viewport.height };
+      state.pageTextAnchors[pageNumber - 1] = await extractTextAnchors(page, viewport);
       state.pageElements.set(pageNumber - 1, pageView);
       fragment.append(pageView.card);
     }
@@ -547,8 +576,33 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     }).promise;
   }
 
+  async function extractTextAnchors(page, viewport) {
+    const textContent = await page.getTextContent();
+    return textContent.items
+      .filter((item) => typeof item.str === "string" && item.str.trim())
+      .map((item) => {
+        const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
+        const fontSize = clamp(
+          Math.hypot(transform[2], transform[3]) || Math.abs(transform[3]) || item.height || DEFAULT_DATE_FONT_SIZE,
+          MIN_DATE_FONT_SIZE,
+          MAX_DATE_FONT_SIZE
+        );
+        return {
+          x: transform[4],
+          y: transform[5],
+          fontSize
+        };
+      });
+  }
+
   function handlePagesClick(event) {
     if (performance.now() < state.ignoreClickUntil) {
+      return;
+    }
+
+    const signatureEditButton = event.target.closest("[data-edit-signature-placement-id]");
+    if (signatureEditButton) {
+      openSignatureEditorModal(signatureEditButton.dataset.editSignaturePlacementId);
       return;
     }
 
@@ -609,6 +663,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
         id: crypto.randomUUID(),
         pageIndex,
         signatureId,
+        dataUrl: signature.dataUrl,
         x: clamp(clientX - rect.left - width / 2, 0, layout.width - width),
         y: clamp(clientY - rect.top - height / 2, 0, layout.height - height),
         width,
@@ -632,20 +687,23 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
 
     const dateValue = getTodayIsoValue();
     const formatId = state.currentSettings.dateFormat;
-    const fontSize = DEFAULT_DATE_FONT_SIZE;
-    const dimensions = measureDatePlacement(dateValue, formatId, fontSize);
     const rect = stage.getBoundingClientRect();
+    const pointX = clientX - rect.left;
+    const pointY = clientY - rect.top;
+    const fontSize = getNearbyDateFontSize(pageIndex, pointX, pointY);
+    const dimensions = measureDatePlacement(dateValue, formatId, fontSize);
     const placement = {
       id: crypto.randomUUID(),
       type: "date",
       pageIndex,
       signatureId,
+      colorKey: state.currentSettings.dateColor,
       dateValue,
       formatId,
       fontSize,
       text: formatDateValue(dateValue, formatId),
-      x: clamp(clientX - rect.left - dimensions.width / 2, 0, layout.width - dimensions.width),
-      y: clamp(clientY - rect.top - dimensions.height / 2, 0, layout.height - dimensions.height),
+      x: clamp(pointX - dimensions.width / 2, 0, layout.width - dimensions.width),
+      y: clamp(pointY - dimensions.height / 2, 0, layout.height - dimensions.height),
       width: dimensions.width,
       height: dimensions.height
     };
@@ -692,14 +750,20 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       const text = document.createElement("div");
       text.className = "placed-date-text";
       text.textContent = placement.text;
+      text.style.color = getSignatureColorValue(getPlacementDateColor(placement));
       text.style.fontSize = `${placement.fontSize}px`;
       node.append(editButton, text);
     } else {
       const signature = getSignature(placement.signatureId);
+      const editButton = document.createElement("button");
+      editButton.className = "placement-edit";
+      editButton.type = "button";
+      editButton.dataset.editSignaturePlacementId = placement.id;
+      editButton.textContent = "Edit";
       const image = document.createElement("img");
-      image.src = signature.dataUrl;
+      image.src = placement.dataUrl || signature.dataUrl;
       image.alt = `${signature.name} placement`;
-      node.append(image);
+      node.append(editButton, image);
     }
 
     const removeButton = document.createElement("button");
@@ -737,7 +801,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     renderPlacementsForPage(placement.pageIndex);
     renderPlacementSummary();
     updateToolbar();
-    setStatus(`Removed a signature from page ${placement.pageIndex + 1}.`);
+    setStatus(`Removed a placement from page ${placement.pageIndex + 1}.`);
   }
 
   function clearPlacements() {
@@ -751,11 +815,20 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     renderAllPlacements();
     renderPlacementSummary();
     updateToolbar();
-    setStatus("Cleared all un-saved signature placements.");
+    setStatus("Cleared all un-saved placements.");
   }
 
   function renderPlacementSummary() {
-    ui.placementCountChip.textContent = `${state.placements.length} placed`;
+    const today = getTodayIsoValue();
+    const signedCount = state.placements.filter((placement) => placement.type !== "date").length;
+    const datedCount = state.placements.filter((placement) => placement.type === "date").length;
+    const hasCustomDate = state.placements.some(
+      (placement) => placement.type === "date" && placement.dateValue !== today
+    );
+
+    ui.signStatusChip.textContent = signedCount === 0 ? "Not yet signed" : `Signed ${formatOccurrenceCount(signedCount)}`;
+    ui.dateStatusChip.textContent = datedCount === 0 ? "Not yet dated" : `Dated ${formatOccurrenceCount(datedCount)}`;
+    ui.customDateChip.hidden = datedCount === 0 || !hasCustomDate;
   }
 
   function beginPointerSession(session) {
@@ -964,7 +1037,8 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       !state.activeSignatureId ||
       !ui.signatureModal.hidden ||
       !ui.settingsModal.hidden ||
-      !ui.dateEditorModal.hidden
+      !ui.dateEditorModal.hidden ||
+      !ui.signatureEditorModal.hidden
     ) {
       hidePlacementTooltip();
       return;
@@ -1051,6 +1125,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     ui.typedSignatureFields.hidden = !typedMode;
     ui.clearSignaturePadButton.hidden = typedMode;
     signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
+    renderCaptureColorSelection();
     renderTypedSignaturePreview();
   }
 
@@ -1071,22 +1146,81 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     }
   }
 
+  function handleCaptureColorSelection(event) {
+    const button = event.target.closest("[data-capture-signature-color]");
+    if (!button) {
+      return;
+    }
+
+    state.currentSettings.signatureColor = button.dataset.captureSignatureColor;
+    if (state.signatureInputMode === "drawn") {
+      signaturePad.recolor(getSignatureColorValue(state.currentSettings.signatureColor));
+    } else {
+      signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
+    }
+    renderCaptureColorSelection();
+    renderSettingsState();
+    renderTypedSignaturePreview();
+  }
+
+  function renderCaptureColorSelection() {
+    for (const button of ui.signatureCaptureColorGrid.querySelectorAll("[data-capture-signature-color]")) {
+      button.classList.toggle(
+        "is-active",
+        button.dataset.captureSignatureColor === state.currentSettings.signatureColor
+      );
+    }
+  }
+
   function renderTypedSignaturePreview() {
-    const previewText = ui.typedSignatureTextInput.value.trim() || "Jason Fischell";
-    ui.typedSignaturePreview.textContent = previewText;
-    ui.typedSignaturePreview.style.fontFamily = state.selectedTypedFont;
-    ui.typedSignaturePreview.style.color = getSignatureColorValue(state.currentSettings.signatureColor);
-    ui.typedSignaturePreview.style.fontSize = "38px";
+    ui.typedSignaturePreview.replaceChildren();
+    ui.typedSignaturePreview.style.fontFamily = "";
+    ui.typedSignaturePreview.style.color = "";
+    ui.typedSignaturePreview.style.fontSize = "";
+
+    if (state.signatureInputMode === "typed") {
+      const previewText = ui.typedSignatureTextInput.value.trim() || "Jason Fischell";
+      ui.typedSignaturePreview.textContent = previewText;
+      ui.typedSignaturePreview.style.fontFamily = state.selectedTypedFont;
+      ui.typedSignaturePreview.style.color = getSignatureColorValue(state.currentSettings.signatureColor);
+      ui.typedSignaturePreview.style.fontSize = "38px";
+      return;
+    }
+
+    const previewSignature = signaturePad?.exportSignature?.();
+    if (!previewSignature) {
+      const placeholder = document.createElement("span");
+      placeholder.className = "preview-placeholder";
+      placeholder.textContent = "Draw on the pad to preview the saved signature.";
+      ui.typedSignaturePreview.append(placeholder);
+      return;
+    }
+
+    const image = document.createElement("img");
+    image.src = previewSignature.dataUrl;
+    image.alt = "Hand-drawn signature preview";
+    ui.typedSignaturePreview.append(image);
   }
 
   function buildTypedSignatureAsset() {
-    const typedText = ui.typedSignatureTextInput.value.trim();
+    return buildTypedSignatureAssetFromConfig({
+      typedText: ui.typedSignatureTextInput.value.trim(),
+      fontFamily: state.selectedTypedFont,
+      colorKey: state.currentSettings.signatureColor
+    });
+  }
+
+  function buildDrawnSignatureAsset() {
+    return signaturePad.exportSignature();
+  }
+
+  function buildTypedSignatureAssetFromConfig({ typedText, fontFamily, colorKey }) {
     if (!typedText) {
       return null;
     }
 
     const fontSize = 56;
-    measurementContext.font = `${fontSize}px ${state.selectedTypedFont}`;
+    measurementContext.font = `${fontSize}px ${fontFamily}`;
     const textWidth = Math.ceil(measurementContext.measureText(typedText).width);
     const width = Math.max(260, textWidth + 36);
     const height = fontSize + 40;
@@ -1094,8 +1228,8 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext("2d");
-    context.font = `${fontSize}px ${state.selectedTypedFont}`;
-    context.fillStyle = getSignatureColorValue(state.currentSettings.signatureColor);
+    context.font = `${fontSize}px ${fontFamily}`;
+    context.fillStyle = getSignatureColorValue(colorKey);
     context.textBaseline = "middle";
     context.fillText(typedText, 18, height / 2 + 2);
 
@@ -1112,7 +1246,15 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       state.currentSettings.signatureColor = colorButton.dataset.signatureColor;
       signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
       renderSettingsState();
+      renderCaptureColorSelection();
       renderTypedSignaturePreview();
+      return;
+    }
+
+    const dateColorButton = event.target.closest("[data-date-color]");
+    if (dateColorButton) {
+      state.currentSettings.dateColor = dateColorButton.dataset.dateColor;
+      renderSettingsState();
       return;
     }
 
@@ -1126,19 +1268,26 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
   }
 
   async function saveDefaultSetting(key) {
-    state.savedPreferences = {
-      ...state.savedPreferences,
-      [key]: state.currentSettings[key]
-    };
+    state.savedPreferences =
+      key === "dateSettings"
+        ? {
+            ...state.savedPreferences,
+            dateFormat: state.currentSettings.dateFormat,
+            dateColor: state.currentSettings.dateColor
+          }
+        : {
+            ...state.savedPreferences,
+            [key]: state.currentSettings[key]
+          };
     await helpers.savePreferences(state.savedPreferences);
     setStatus(
-      key === "signatureColor"
-        ? "Saved the default signature color."
-        : "Saved the default date format."
+      key === "signatureColor" ? "Saved the default signature color." : "Saved the default date settings."
     );
   }
 
   function renderSettingsState() {
+    updateDateFormatOptionLabels(ui.dateFormatGrid, "data-date-format", getTodayIsoValue());
+
     for (const button of ui.signatureColorGrid.querySelectorAll("[data-signature-color]")) {
       button.classList.toggle("is-active", button.dataset.signatureColor === state.currentSettings.signatureColor);
     }
@@ -1146,15 +1295,59 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     for (const button of ui.dateFormatGrid.querySelectorAll("[data-date-format]")) {
       button.classList.toggle("is-active", button.dataset.dateFormat === state.currentSettings.dateFormat);
     }
+
+    for (const button of ui.dateColorGrid.querySelectorAll("[data-date-color]")) {
+      button.classList.toggle("is-active", button.dataset.dateColor === state.currentSettings.dateColor);
+    }
   }
 
   function openSettingsModal() {
     hidePlacementTooltip();
+    state.settingsSnapshot = { ...state.currentSettings };
+    renderSettingsState();
     ui.settingsModal.hidden = false;
   }
 
   function closeSettingsModal() {
+    if (state.settingsSnapshot) {
+      state.currentSettings = { ...state.settingsSnapshot };
+      signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
+      renderSettingsState();
+      renderCaptureColorSelection();
+      renderTypedSignaturePreview();
+      state.settingsSnapshot = null;
+    }
     ui.settingsModal.hidden = true;
+  }
+
+  async function saveSettingsChanges() {
+    const previousColor = state.settingsSnapshot?.signatureColor ?? state.currentSettings.signatureColor;
+    freezePlacedSignatureSnapshots();
+
+    if (previousColor !== state.currentSettings.signatureColor) {
+      state.signatures = await Promise.all(
+        state.signatures.map(async (signature) => {
+          const asset = await buildSignatureAssetForColor(signature, state.currentSettings.signatureColor);
+          return {
+            ...signature,
+            color: state.currentSettings.signatureColor,
+            dataUrl: asset.dataUrl,
+            width: asset.width,
+            height: asset.height
+          };
+        })
+      );
+      await helpers.saveSignatures(state.signatures);
+      renderSignatureLibrary();
+      renderAllPlacements();
+    }
+
+    signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
+    renderCaptureColorSelection();
+    renderTypedSignaturePreview();
+    state.settingsSnapshot = null;
+    ui.settingsModal.hidden = true;
+    setStatus("Saved workspace settings.");
   }
 
   function openDateEditorModal(placementId) {
@@ -1166,8 +1359,12 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     hidePlacementTooltip();
     state.dateEditorPlacementId = placementId;
     ui.dateEditorInput.value = placement.dateValue;
+    renderDateEditorFormatExamples();
     for (const button of ui.dateEditorFormatGrid.querySelectorAll("[data-date-editor-format]")) {
       button.classList.toggle("is-active", button.dataset.dateEditorFormat === placement.formatId);
+    }
+    for (const button of ui.dateEditorColorGrid.querySelectorAll("[data-date-editor-color]")) {
+      button.classList.toggle("is-active", button.dataset.dateEditorColor === getPlacementDateColor(placement));
     }
     ui.dateEditorModal.hidden = false;
   }
@@ -1188,6 +1385,25 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     }
   }
 
+  function handleDateEditorColorSelection(event) {
+    const button = event.target.closest("[data-date-editor-color]");
+    if (!button) {
+      return;
+    }
+
+    for (const option of ui.dateEditorColorGrid.querySelectorAll("[data-date-editor-color]")) {
+      option.classList.toggle("is-active", option === button);
+    }
+  }
+
+  function renderDateEditorFormatExamples() {
+    updateDateFormatOptionLabels(
+      ui.dateEditorFormatGrid,
+      "data-date-editor-format",
+      ui.dateEditorInput.value || getTodayIsoValue()
+    );
+  }
+
   function applyDatePlacementChanges() {
     const placement = getPlacement(state.dateEditorPlacementId);
     if (!placement || placement.type !== "date" || !ui.dateEditorInput.value) {
@@ -1195,12 +1411,14 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     }
 
     const selectedFormatButton = ui.dateEditorFormatGrid.querySelector(".is-active[data-date-editor-format]");
+    const selectedColorButton = ui.dateEditorColorGrid.querySelector(".is-active[data-date-editor-color]");
     const formatId = selectedFormatButton?.dataset.dateEditorFormat || placement.formatId;
     const dimensions = measureDatePlacement(ui.dateEditorInput.value, formatId, placement.fontSize);
     const layout = state.pageLayouts[placement.pageIndex];
     updatePlacement(placement.id, {
       dateValue: ui.dateEditorInput.value,
       formatId,
+      colorKey: selectedColorButton?.dataset.dateEditorColor || getPlacementDateColor(placement),
       text: formatDateValue(ui.dateEditorInput.value, formatId),
       width: Math.min(dimensions.width, layout.width - placement.x),
       height: Math.min(dimensions.height, layout.height - placement.y)
@@ -1213,7 +1431,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
 
   function measureDatePlacement(dateValue, formatId, fontSize) {
     const text = formatDateValue(dateValue, formatId);
-    measurementContext.font = `700 ${fontSize}px "Segoe UI", sans-serif`;
+    measurementContext.font = `500 ${fontSize}px "Segoe UI", sans-serif`;
     return {
       width: Math.ceil(measurementContext.measureText(text).width) + DATE_TEXT_PADDING_X * 2,
       height: Math.ceil(fontSize * 1.25) + DATE_TEXT_PADDING_Y
@@ -1254,8 +1472,186 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     ).padStart(2, "0")}`;
   }
 
+  function getNearbyDateFontSize(pageIndex, x, y) {
+    const anchors = state.pageTextAnchors[pageIndex] || [];
+    if (anchors.length === 0) {
+      return DEFAULT_DATE_FONT_SIZE;
+    }
+
+    let nearestAnchor = anchors[0];
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const anchor of anchors) {
+      const distance = Math.hypot(anchor.x - x, anchor.y - y);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestAnchor = anchor;
+      }
+    }
+
+    return clamp(
+      Math.round((nearestAnchor.fontSize || DEFAULT_DATE_FONT_SIZE) * 0.95),
+      MIN_DATE_FONT_SIZE,
+      MAX_DATE_FONT_SIZE
+    );
+  }
+
+  function updateDateFormatOptionLabels(container, attributeName, dateValue) {
+    for (const button of container.querySelectorAll(`[${attributeName}]`)) {
+      button.textContent = formatDateValue(dateValue, button.getAttribute(attributeName));
+    }
+  }
+
+  function formatOccurrenceCount(count) {
+    if (count === 1) {
+      return "once";
+    }
+
+    if (count === 2) {
+      return "twice";
+    }
+
+    return `${count} times`;
+  }
+
   function getSignatureColorValue(colorKey) {
     return COLOR_OPTIONS[colorKey]?.value || COLOR_OPTIONS.black.value;
+  }
+
+  function getPlacementDateColor(placement) {
+    return placement.colorKey || state.currentSettings.dateColor || "black";
+  }
+
+  function getPlacementSignatureColor(placement) {
+    const signature = getSignature(placement.signatureId);
+    return placement.colorKey || signature?.color || state.currentSettings.signatureColor;
+  }
+
+  function freezePlacedSignatureSnapshots() {
+    state.placements = state.placements.map((placement) => {
+      if (placement.type === "date" || placement.dataUrl) {
+        return placement;
+      }
+
+      const signature = getSignature(placement.signatureId);
+      return signature
+        ? {
+            ...placement,
+            dataUrl: signature.dataUrl
+          }
+        : placement;
+    });
+  }
+
+  function openSignatureEditorModal(placementId) {
+    const placement = getPlacement(placementId);
+    if (!placement || placement.type === "date") {
+      return;
+    }
+
+    hidePlacementTooltip();
+    state.signatureEditorPlacementId = placementId;
+    state.signatureEditorDraftColor = getPlacementSignatureColor(placement);
+    renderSignatureEditorState();
+    ui.signatureEditorModal.hidden = false;
+  }
+
+  function closeSignatureEditorModal() {
+    state.signatureEditorPlacementId = null;
+    state.signatureEditorDraftColor = null;
+    ui.signatureEditorActions.hidden = true;
+    ui.signatureEditorModal.hidden = true;
+  }
+
+  function handleSignatureEditorColorSelection(event) {
+    const button = event.target.closest("[data-signature-editor-color]");
+    if (!button) {
+      return;
+    }
+
+    state.signatureEditorDraftColor = button.dataset.signatureEditorColor;
+    renderSignatureEditorState();
+  }
+
+  function renderSignatureEditorState() {
+    const placement = getPlacement(state.signatureEditorPlacementId);
+    const currentColor = placement ? getPlacementSignatureColor(placement) : null;
+
+    for (const button of ui.signatureEditorColorGrid.querySelectorAll("[data-signature-editor-color]")) {
+      button.classList.toggle("is-active", button.dataset.signatureEditorColor === state.signatureEditorDraftColor);
+    }
+
+    ui.signatureEditorActions.hidden = !placement || state.signatureEditorDraftColor === currentColor;
+  }
+
+  async function applySignaturePlacementChanges() {
+    const placement = getPlacement(state.signatureEditorPlacementId);
+    const signature = placement ? getSignature(placement.signatureId) : null;
+    if (!placement || !signature) {
+      return;
+    }
+
+    const baseColor = signature.color || state.currentSettings.signatureColor;
+    const nextColor = state.signatureEditorDraftColor || baseColor;
+    if (nextColor === getPlacementSignatureColor(placement)) {
+      closeSignatureEditorModal();
+      return;
+    }
+
+    if (nextColor === baseColor) {
+      updatePlacement(placement.id, {
+        colorKey: null,
+        dataUrl: null
+      });
+    } else {
+      const asset = await buildSignatureAssetForColor(signature, nextColor);
+      updatePlacement(placement.id, {
+        colorKey: nextColor,
+        dataUrl: asset.dataUrl
+      });
+    }
+
+    state.hasUnsavedChanges = true;
+    renderPlacementsForPage(placement.pageIndex);
+    closeSignatureEditorModal();
+    setStatus("Updated the placed signature color.");
+  }
+
+  async function buildSignatureAssetForColor(signature, colorKey) {
+    if (signature.variant === "typed" && signature.typedText) {
+      return buildTypedSignatureAssetFromConfig({
+        typedText: signature.typedText,
+        fontFamily: signature.fontFamily || TYPED_FONT_OPTIONS[0],
+        colorKey
+      });
+    }
+
+    return {
+      dataUrl: await recolorRasterDataUrl(signature.dataUrl, colorKey),
+      width: signature.width,
+      height: signature.height
+    };
+  }
+
+  async function recolorRasterDataUrl(dataUrl, colorKey) {
+    const image = await loadImageElement(dataUrl);
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth || image.width;
+    canvas.height = image.naturalHeight || image.height;
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    context.globalCompositeOperation = "source-in";
+    context.fillStyle = getSignatureColorValue(colorKey);
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/png");
+  }
+
+  function loadImageElement(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Could not recolor the saved signature."));
+      image.src = dataUrl;
+    });
   }
 
   function updateToolbar() {
@@ -1339,12 +1735,13 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       if (placement.type === "date") {
         const pageSize = page.getSize();
         const size = (placement.fontSize / layout.height) * pageSize.height;
+        const { red, green, blue } = hexToRgbComponents(getSignatureColorValue(getPlacementDateColor(placement)));
         page.drawText(placement.text, {
           x: (placement.x / layout.width) * pageSize.width,
           y: pageSize.height - ((placement.y + placement.height - 6) / layout.height) * pageSize.height,
           size,
           font: helveticaFont,
-          color: pdfLib.rgb(0.07, 0.07, 0.07)
+          color: pdfLib.rgb(red / 255, green / 255, blue / 255)
         });
         continue;
       }
@@ -1354,10 +1751,11 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
         continue;
       }
 
-      let embedded = embeddedSignatures.get(signature.id);
+      const signatureSource = placement.dataUrl || signature.dataUrl;
+      let embedded = embeddedSignatures.get(signatureSource);
       if (!embedded) {
-        embedded = await pdfDocument.embedPng(helpers.dataUrlToBytes(signature.dataUrl));
-        embeddedSignatures.set(signature.id, embedded);
+        embedded = await pdfDocument.embedPng(helpers.dataUrlToBytes(signatureSource));
+        embeddedSignatures.set(signatureSource, embedded);
       }
 
       const pageSize = page.getSize();
@@ -1380,6 +1778,23 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     ui.statusText.textContent = message;
   }
 
+  function hexToRgbComponents(hexColor) {
+    const normalized = String(hexColor).replace("#", "");
+    const value =
+      normalized.length === 3
+        ? normalized
+            .split("")
+            .map((char) => char + char)
+            .join("")
+        : normalized;
+
+    return {
+      red: Number.parseInt(value.slice(0, 2), 16),
+      green: Number.parseInt(value.slice(2, 4), 16),
+      blue: Number.parseInt(value.slice(4, 6), 16)
+    };
+  }
+
   function showError(message) {
     hidePlacementTooltip();
     ui.fileName.textContent = "Signing workspace unavailable";
@@ -1395,16 +1810,23 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
 function getUi() {
   return {
     addSignatureButton: document.getElementById("addSignatureButton"),
+    cancelSettingsButton: document.getElementById("cancelSettingsButton"),
     cancelSignatureButton: document.getElementById("cancelSignatureButton"),
     cancelDateEditorButton: document.getElementById("cancelDateEditorButton"),
+    cancelSignatureEditorButton: document.getElementById("cancelSignatureEditorButton"),
     clearPlacementsButton: document.getElementById("clearPlacementsButton"),
     clearSignaturePadButton: document.getElementById("clearSignaturePadButton"),
     closeModalButton: document.getElementById("closeModalButton"),
     closeDateEditorButton: document.getElementById("closeDateEditorButton"),
     closeSettingsButton: document.getElementById("closeSettingsButton"),
+    closeSignatureEditorButton: document.getElementById("closeSignatureEditorButton"),
+    customDateChip: document.getElementById("customDateChip"),
+    dateColorGrid: document.getElementById("dateColorGrid"),
+    dateEditorColorGrid: document.getElementById("dateEditorColorGrid"),
     dateEditorFormatGrid: document.getElementById("dateEditorFormatGrid"),
     dateEditorInput: document.getElementById("dateEditorInput"),
     dateEditorModal: document.getElementById("dateEditorModal"),
+    dateStatusChip: document.getElementById("dateStatusChip"),
     dateFormatGrid: document.getElementById("dateFormatGrid"),
     documentHint: document.getElementById("documentHint"),
     drawSignatureModeButton: document.getElementById("drawSignatureModeButton"),
@@ -1414,23 +1836,29 @@ function getUi() {
     openSettingsButton: document.getElementById("openSettingsButton"),
     pagesContainer: document.getElementById("pagesContainer"),
     pagesShell: document.querySelector(".pages-shell"),
-    placementCountChip: document.getElementById("placementCountChip"),
     placementTooltip: document.getElementById("placementTooltip"),
     promptAddSignatureButton: document.getElementById("promptAddSignatureButton"),
+    saveSettingsButton: document.getElementById("saveSettingsButton"),
     saveSignatureButton: document.getElementById("saveSignatureButton"),
     saveSignatureDefaultsButton: document.getElementById("saveSignatureDefaultsButton"),
     saveSignedButton: document.getElementById("saveSignedButton"),
     saveDateDefaultsButton: document.getElementById("saveDateDefaultsButton"),
     saveDateEditorButton: document.getElementById("saveDateEditorButton"),
+    saveSignatureEditorButton: document.getElementById("saveSignatureEditorButton"),
     settingsModal: document.getElementById("settingsModal"),
+    signStatusChip: document.getElementById("signStatusChip"),
     signatureColorGrid: document.getElementById("signatureColorGrid"),
-    signatureCountChip: document.getElementById("signatureCountChip"),
+    signatureCaptureColorGrid: document.getElementById("signatureCaptureColorGrid"),
+    signatureEditorActions: document.getElementById("signatureEditorActions"),
+    signatureEditorColorGrid: document.getElementById("signatureEditorColorGrid"),
+    signatureEditorModal: document.getElementById("signatureEditorModal"),
     signatureLibrary: document.getElementById("signatureLibrary"),
     signatureModal: document.getElementById("signatureModal"),
     signatureModalHelp: document.getElementById("signatureModalHelp"),
     signatureNameInput: document.getElementById("signatureNameInput"),
     signaturePrompt: document.getElementById("signaturePrompt"),
     statusText: document.getElementById("statusText"),
+    storedSignatureMeta: document.getElementById("storedSignatureMeta"),
     typedSignatureFields: document.getElementById("typedSignatureFields"),
     typedSignatureFontGrid: document.getElementById("typedSignatureFontGrid"),
     typedSignatureModeButton: document.getElementById("typedSignatureModeButton"),

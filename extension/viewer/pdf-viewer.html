@@ -24,8 +24,9 @@
         </div>
 
         <div class="chip-row">
-          <span class="chip" id="signatureCountChip">0 signatures</span>
-          <span class="chip subtle" id="placementCountChip">0 placed</span>
+          <span class="chip subtle" id="signStatusChip">Not yet signed</span>
+          <span class="chip subtle" id="dateStatusChip">Not yet dated</span>
+          <span class="chip warning" id="customDateChip" hidden>Custom date in use</span>
         </div>
 
         <section class="prompt-card" id="signaturePrompt" hidden>
@@ -39,7 +40,10 @@
 
         <section class="panel inset">
           <div class="section-header">
-            <h2>Stored Signatures</h2>
+            <div class="section-heading">
+              <h2>Stored Signatures</h2>
+              <span class="section-meta" id="storedSignatureMeta">0 signatures stored</span>
+            </div>
             <button class="secondary" id="addSignatureButton" type="button">Add Signature</button>
           </div>
           <div class="signature-library" id="signatureLibrary">
@@ -110,7 +114,7 @@
 
         <div class="typed-signature-fields" id="typedSignatureFields" hidden>
           <label class="field">
-            <span>Typed signature text</span>
+            <span>Signature text</span>
             <input id="typedSignatureTextInput" type="text" maxlength="60" placeholder="Example: Jason Fischell" />
           </label>
 
@@ -124,10 +128,24 @@
               <button class="font-option" data-font-option="'Lucida Handwriting', cursive" type="button" style="font-family: 'Lucida Handwriting', cursive;">Lucida Handwriting</button>
             </div>
           </div>
+        </div>
 
-          <div class="typed-preview-shell">
-            <span class="font-picker-label">Preview</span>
-            <div class="typed-preview" id="typedSignaturePreview">Jason Fischell</div>
+        <div class="font-picker">
+          <span class="font-picker-label">Signature color</span>
+          <div class="color-grid" id="signatureCaptureColorGrid">
+            <button class="color-option" data-capture-signature-color="black" type="button"><span class="color-swatch black"></span><span>Black</span></button>
+            <button class="color-option" data-capture-signature-color="blue" type="button"><span class="color-swatch blue"></span><span>Blue</span></button>
+            <button class="color-option" data-capture-signature-color="red" type="button"><span class="color-swatch red"></span><span>Red</span></button>
+            <button class="color-option" data-capture-signature-color="green" type="button"><span class="color-swatch green"></span><span>Green</span></button>
+            <button class="color-option" data-capture-signature-color="yellow" type="button"><span class="color-swatch yellow"></span><span>Yellow</span></button>
+            <button class="color-option" data-capture-signature-color="white" type="button"><span class="color-swatch white"></span><span>White</span></button>
+          </div>
+        </div>
+
+        <div class="typed-preview-shell">
+          <span class="font-picker-label">Preview</span>
+          <div class="typed-preview signature-preview" id="typedSignaturePreview">
+            <span class="preview-placeholder">Draw on the pad to preview the saved signature.</span>
           </div>
         </div>
 
@@ -183,7 +201,23 @@
             <button class="format-option" data-date-format="stamp" type="button">01-AUG-2026</button>
             <button class="format-option" data-date-format="iso" type="button">2026-08-01</button>
           </div>
+          <div class="font-picker">
+            <span class="font-picker-label">Date color</span>
+            <div class="color-grid" id="dateColorGrid">
+              <button class="color-option" data-date-color="black" type="button"><span class="color-swatch black"></span><span>Black</span></button>
+              <button class="color-option" data-date-color="blue" type="button"><span class="color-swatch blue"></span><span>Blue</span></button>
+              <button class="color-option" data-date-color="red" type="button"><span class="color-swatch red"></span><span>Red</span></button>
+              <button class="color-option" data-date-color="green" type="button"><span class="color-swatch green"></span><span>Green</span></button>
+              <button class="color-option" data-date-color="yellow" type="button"><span class="color-swatch yellow"></span><span>Yellow</span></button>
+              <button class="color-option" data-date-color="white" type="button"><span class="color-swatch white"></span><span>White</span></button>
+            </div>
+          </div>
         </section>
+
+        <div class="modal-actions">
+          <button class="secondary" id="cancelSettingsButton" type="button">Cancel</button>
+          <button id="saveSettingsButton" type="button">Save</button>
+        </div>
       </section>
     </div>
 
@@ -214,9 +248,52 @@
           </div>
         </div>
 
+        <div class="font-picker">
+          <span class="font-picker-label">Date color</span>
+          <div class="color-grid" id="dateEditorColorGrid">
+            <button class="color-option" data-date-editor-color="black" type="button"><span class="color-swatch black"></span><span>Black</span></button>
+            <button class="color-option" data-date-editor-color="blue" type="button"><span class="color-swatch blue"></span><span>Blue</span></button>
+            <button class="color-option" data-date-editor-color="red" type="button"><span class="color-swatch red"></span><span>Red</span></button>
+            <button class="color-option" data-date-editor-color="green" type="button"><span class="color-swatch green"></span><span>Green</span></button>
+            <button class="color-option" data-date-editor-color="yellow" type="button"><span class="color-swatch yellow"></span><span>Yellow</span></button>
+            <button class="color-option" data-date-editor-color="white" type="button"><span class="color-swatch white"></span><span>White</span></button>
+          </div>
+        </div>
+
         <div class="modal-actions">
           <button class="secondary" id="cancelDateEditorButton" type="button">Close</button>
           <button id="saveDateEditorButton" type="button">Apply Changes</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="signatureEditorModal" hidden>
+      <section class="modal-panel date-editor-modal" aria-labelledby="signatureEditorModalTitle" aria-modal="true" role="dialog">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Signature Placement</p>
+            <h2 id="signatureEditorModalTitle">Edit placed signature</h2>
+          </div>
+          <button class="icon-button" id="closeSignatureEditorButton" type="button" aria-label="Close signature editor">
+            x
+          </button>
+        </div>
+
+        <div class="font-picker">
+          <span class="font-picker-label">Placed signature color</span>
+          <div class="color-grid" id="signatureEditorColorGrid">
+            <button class="color-option" data-signature-editor-color="black" type="button"><span class="color-swatch black"></span><span>Black</span></button>
+            <button class="color-option" data-signature-editor-color="blue" type="button"><span class="color-swatch blue"></span><span>Blue</span></button>
+            <button class="color-option" data-signature-editor-color="red" type="button"><span class="color-swatch red"></span><span>Red</span></button>
+            <button class="color-option" data-signature-editor-color="green" type="button"><span class="color-swatch green"></span><span>Green</span></button>
+            <button class="color-option" data-signature-editor-color="yellow" type="button"><span class="color-swatch yellow"></span><span>Yellow</span></button>
+            <button class="color-option" data-signature-editor-color="white" type="button"><span class="color-swatch white"></span><span>White</span></button>
+          </div>
+        </div>
+
+        <div class="modal-actions" id="signatureEditorActions" hidden>
+          <button class="secondary" id="cancelSignatureEditorButton" type="button">Cancel</button>
+          <button id="saveSignatureEditorButton" type="button">Save</button>
         </div>
       </section>
     </div>

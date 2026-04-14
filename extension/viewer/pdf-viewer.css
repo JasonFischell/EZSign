@@ -18,6 +18,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -168,6 +172,11 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
   color: var(--muted);
 }
 
+.chip.warning {
+  background: #fff4e5;
+  color: #9a6700;
+}
+
 .inset,
 .prompt-card {
   padding: 16px;
@@ -199,6 +208,16 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
   display: flex;
   gap: 12px;
   justify-content: space-between;
+}
+
+.section-heading {
+  display: grid;
+  gap: 2px;
+}
+
+.section-meta {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .signature-library {
@@ -357,8 +376,12 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
 .font-option.is-active,
 .color-option.is-active,
 .format-option.is-active {
-  border-color: rgba(15, 118, 110, 0.42);
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
+  background: linear-gradient(180deg, rgba(15, 118, 110, 0.18), rgba(14, 165, 233, 0.18));
+  border-color: #0f766e;
+  box-shadow:
+    0 0 0 5px rgba(15, 118, 110, 0.28),
+    inset 0 0 0 1px rgba(15, 118, 110, 0.34),
+    0 12px 26px rgba(15, 118, 110, 0.18);
 }
 
 .typed-preview {
@@ -379,6 +402,23 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
   min-height: 120px;
   padding: 18px;
   text-align: center;
+}
+
+.signature-preview {
+  min-height: 132px;
+  overflow: hidden;
+}
+
+.signature-preview img {
+  display: block;
+  margin: 0 auto;
+  max-height: 86px;
+  max-width: 100%;
+}
+
+.preview-placeholder {
+  color: var(--muted);
+  font-style: italic;
 }
 
 .color-swatch {
@@ -485,7 +525,7 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
 .placed-signature.is-selected {
   box-shadow:
     0 8px 20px rgba(19, 36, 41, 0.16),
-    0 0 0 3px rgba(15, 118, 110, 0.18);
+    0 0 0 4px rgba(15, 118, 110, 0.28);
 }
 
 .placed-signature img {
@@ -498,41 +538,58 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
 
 .placed-date {
   align-items: stretch;
-  background: rgba(255, 255, 255, 0.96);
+  background: rgba(255, 255, 255, 0.9);
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  padding: 10px 12px 12px;
+  justify-content: flex-end;
+  padding: 26px 10px 10px;
 }
 
 .placed-date-text {
   color: #111111;
   font-family: "Segoe UI", system-ui, sans-serif;
-  font-weight: 700;
+  font-weight: 500;
   line-height: 1.2;
   pointer-events: none;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .placement-edit {
-  align-self: start;
   background: rgba(15, 118, 110, 0.12);
   border-radius: 999px;
   color: var(--accent-strong);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  padding: 4px 8px;
+  left: 6px;
+  padding: 3px 8px;
+  position: absolute;
+  top: 6px;
+}
+
+.placement-edit,
+.placement-remove,
+.placement-resize-handle {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.placed-signature.is-selected .placement-edit,
+.placed-signature.is-selected .placement-remove,
+.placed-signature.is-selected .placement-resize-handle {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .placement-remove {
   background: rgba(19, 36, 41, 0.74);
   border-radius: 999px;
   color: #ffffff;
-  font-size: 11px;
-  padding: 4px 8px;
+  font-size: 10px;
+  padding: 3px 8px;
   position: absolute;
-  right: 8px;
-  top: 8px;
+  right: 6px;
+  top: 6px;
 }
 
 .placement-resize-handle {
@@ -607,10 +664,11 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
 }
 
 .modal-backdrop {
-  align-items: center;
+  align-items: start;
   background: rgba(19, 36, 41, 0.44);
   display: grid;
   inset: 0;
+  overflow: auto;
   padding: 24px;
   position: fixed;
   z-index: 1000;
@@ -627,8 +685,10 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
   box-shadow: 0 24px 70px rgba(19, 36, 41, 0.26);
   display: grid;
   gap: 16px;
-  margin: 0 auto;
+  margin: auto;
+  max-height: calc(100vh - 48px);
   max-width: 760px;
+  overflow: auto;
   padding: 22px;
   width: min(100%, 760px);
 }

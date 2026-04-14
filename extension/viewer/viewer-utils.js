@@ -2,7 +2,8 @@ const SIGNATURE_STORAGE_KEY = "savedSignatures";
 const PREFERENCES_STORAGE_KEY = "ezsignViewerPreferences";
 const DEFAULT_PREFERENCES = {
   signatureColor: "black",
-  dateFormat: "long"
+  dateFormat: "long",
+  dateColor: "black"
 };
 
 export async function loadPreviewFromCache(cacheKey) {
