@@ -9,67 +9,154 @@
   <body>
     <main class="layout">
       <header class="hero">
-        <p class="eyebrow">EZSign</p>
-        <h1>Find signature-ready documents in Gmail.</h1>
+        <div class="hero-topbar">
+          <div>
+            <p class="eyebrow">EZSign</p>
+            <h1>Find signature-ready documents in Gmail.</h1>
+          </div>
+          <div class="hero-actions">
+            <span class="pill subtle" id="authPill">Please Sign In</span>
+            <button class="icon-button" id="openSettingsButton" type="button" aria-label="Open Gmail assistant settings">
+              &#9881;
+            </button>
+          </div>
+        </div>
         <p class="lede">
-          Search Gmail for likely signature requests, review attachments, and queue documents for
-          a validated signing workflow.
+          Search Gmail for likely signature requests, then open documents directly in the EZSign signing workspace.
         </p>
       </header>
+
       <p class="activity-message muted" id="activityMessage">
-        Ready to search Gmail, download attachments, and build a signing queue.
+        Sign in with Gmail to start finding documents that need signatures.
       </p>
 
-      <section class="card">
-        <div class="card-header">
-          <h2>Gmail Access</h2>
-          <span class="pill" id="authPill">Not connected</span>
-        </div>
+      <section class="card sign-in-card" id="signInCard">
+        <h2>Gmail Required</h2>
         <p class="muted" id="authHelp">
-          Configure OAuth in the manifest to search your real Gmail inbox. Demo data is available
-          right now.
+          Connect your Gmail account to search for documents that need signatures.
         </p>
         <div class="button-row">
-          <button id="connectButton" type="button">Connect Gmail</button>
-          <button class="secondary" id="demoButton" type="button">Load Demo Results</button>
+          <button id="connectButton" type="button">Sign In with Gmail</button>
         </div>
       </section>
 
-      <section class="card">
+      <section class="card" id="searchCard" hidden>
         <div class="card-header">
           <h2>Search</h2>
           <span class="pill subtle" id="sourcePill">Idle</span>
         </div>
         <form id="searchForm">
-          <label class="field">
-            <span>Gmail query</span>
-            <textarea
-              id="queryInput"
-              rows="4"
-              placeholder='Example: has:attachment filename:pdf "please sign"'
-            ></textarea>
-          </label>
-          <button id="searchButton" type="submit">Search Gmail</button>
+          <div class="button-row compact">
+            <button class="secondary" id="toggleSearchButton" type="button">Edit Search</button>
+            <button id="searchButton" type="submit">Search Gmail</button>
+          </div>
+          <div class="search-editor" id="searchEditor" hidden>
+            <label class="field">
+              <span>Search query</span>
+              <textarea
+                id="queryInput"
+                rows="5"
+                placeholder='Example: has:attachment ("please sign" OR signature)'
+              ></textarea>
+            </label>
+          </div>
         </form>
       </section>
 
-      <section class="card">
+      <section class="card" id="documentsCard" hidden>
         <div class="card-header">
-          <h2>Signing Queue</h2>
-          <span class="pill subtle" id="queueCountPill">0 items</span>
-        </div>
-        <div id="queueList" class="stack empty-state">No documents have been queued yet.</div>
-      </section>
-
-      <section class="card">
-        <div class="card-header">
-          <h2>Matches</h2>
+          <h2>Documents Requiring Signatures</h2>
           <span class="pill subtle" id="resultsCountPill">0 found</span>
         </div>
-        <div id="results" class="stack empty-state">Run a search or load demo results.</div>
+        <div id="results" class="stack empty-state">Search Gmail to load documents.</div>
+      </section>
+
+      <section class="card" id="recentSignedCard" hidden>
+        <div class="card-header">
+          <h2>Recently Signed</h2>
+          <span class="pill subtle">3 latest</span>
+        </div>
+        <div id="recentSignedList" class="stack empty-state">Signed documents will appear here.</div>
       </section>
     </main>
 
-    <script src="./sidepanel-v2.js"></script>
+    <div class="modal-backdrop" id="settingsModal" hidden>
+      <section class="modal-panel" aria-labelledby="settingsTitle" aria-modal="true" role="dialog">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Gmail Assistant Settings</p>
+            <h2 id="settingsTitle">EZSign Gmail preferences</h2>
+          </div>
+          <button class="icon-button" id="closeSettingsButton" type="button" aria-label="Close settings">
+            x
+          </button>
+        </div>
+
+        <section class="settings-section">
+          <h3>Account</h3>
+          <label class="field">
+            <span>Signer name</span>
+            <input id="signerNameInput" type="text" maxlength="60" placeholder="Name from Gmail" />
+          </label>
+          <p class="muted" id="settingsAccountHelp">Sign in with Gmail to manage assistant settings.</p>
+          <button class="danger-button" id="signOutButton" type="button">Sign Out</button>
+        </section>
+
+        <section class="settings-section">
+          <div class="section-header">
+            <h3>Signature Settings</h3>
+            <button class="secondary" id="saveSignatureDefaultsButton" type="button">Set as Default</button>
+          </div>
+          <p class="muted">Choose the default color used when you create new signatures.</p>
+          <div class="color-grid" id="signatureColorGrid">
+            <button class="color-option" data-signature-color="black" type="button"><span class="color-swatch black"></span><span>Black</span></button>
+            <button class="color-option" data-signature-color="blue" type="button"><span class="color-swatch blue"></span><span>Blue</span></button>
+            <button class="color-option" data-signature-color="red" type="button"><span class="color-swatch red"></span><span>Red</span></button>
+            <button class="color-option" data-signature-color="green" type="button"><span class="color-swatch green"></span><span>Green</span></button>
+            <button class="color-option" data-signature-color="yellow" type="button"><span class="color-swatch yellow"></span><span>Yellow</span></button>
+            <button class="color-option" data-signature-color="white" type="button"><span class="color-swatch white"></span><span>White</span></button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="section-header">
+            <h3>Date Settings</h3>
+            <button class="secondary" id="saveDateDefaultsButton" type="button">Set as Default</button>
+          </div>
+          <p class="muted">Choose the format and default color for placed dates.</p>
+          <div class="format-list" id="dateFormatGrid">
+            <button class="format-option" data-date-format="long" type="button">August 1, 2026</button>
+            <button class="format-option" data-date-format="short" type="button">8/1/26</button>
+            <button class="format-option" data-date-format="stamp" type="button">01-AUG-2026</button>
+            <button class="format-option" data-date-format="iso" type="button">2026-08-01</button>
+          </div>
+          <div class="color-grid" id="dateColorGrid">
+            <button class="color-option" data-date-color="black" type="button"><span class="color-swatch black"></span><span>Black</span></button>
+            <button class="color-option" data-date-color="blue" type="button"><span class="color-swatch blue"></span><span>Blue</span></button>
+            <button class="color-option" data-date-color="red" type="button"><span class="color-swatch red"></span><span>Red</span></button>
+            <button class="color-option" data-date-color="green" type="button"><span class="color-swatch green"></span><span>Green</span></button>
+            <button class="color-option" data-date-color="yellow" type="button"><span class="color-swatch yellow"></span><span>Yellow</span></button>
+            <button class="color-option" data-date-color="white" type="button"><span class="color-swatch white"></span><span>White</span></button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="section-header">
+            <h3>Saved Signatures</h3>
+            <button class="danger-button" id="deleteSelectedSignaturesButton" type="button">Delete Selected</button>
+          </div>
+          <div id="signatureManagerList" class="signature-manager empty-state">
+            Sign in with Gmail to manage saved signatures.
+          </div>
+        </section>
+
+        <div class="modal-actions">
+          <button class="secondary" id="cancelSettingsButton" type="button">Cancel</button>
+          <button id="saveSettingsButton" type="button">Save</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="./sidepanel-v3.js"></script>
   </body>
 </html>

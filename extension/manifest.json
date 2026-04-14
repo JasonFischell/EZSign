@@ -12,7 +12,8 @@
   ],
   "host_permissions": [
     "https://mail.google.com/*",
-    "https://gmail.googleapis.com/*"
+    "https://gmail.googleapis.com/*",
+    "https://www.googleapis.com/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js",
@@ -38,7 +39,9 @@
   "oauth2": {
     "client_id": "123277553116-e7bu5f7rnegiu4h2cq0jrs8q9dcmm8ks.apps.googleusercontent.com",
     "scopes": [
-      "https://www.googleapis.com/auth/gmail.readonly"
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.compose",
+      "https://www.googleapis.com/auth/userinfo.profile"
     ]
   }
 }

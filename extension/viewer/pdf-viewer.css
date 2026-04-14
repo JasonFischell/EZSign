@@ -88,7 +88,7 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
   align-items: stretch;
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  grid-template-columns: minmax(0, 1fr) 360px;
   height: 100vh;
   overflow: hidden;
   padding: 18px;
@@ -111,9 +111,16 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
 .sidebar {
   align-content: start;
   height: calc(100vh - 36px);
+  max-width: 360px;
+  min-width: 360px;
   order: 2;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 18px;
+}
+
+.sidebar > * {
+  min-width: 0;
 }
 
 .sidebar-copy h1,
@@ -296,17 +303,20 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
 
 .signature-card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
 }
 
 .signature-card-actions button {
-  min-width: 86px;
+  flex: 1 1 120px;
+  min-width: 0;
 }
 
 .signature-color-row {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   justify-content: space-between;
 }
@@ -797,6 +807,11 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
   .sidebar,
   .document-shell {
     order: initial;
+  }
+
+  .sidebar {
+    max-width: none;
+    min-width: 0;
   }
 
   .pages-shell {

@@ -14,6 +14,7 @@ const results = document.getElementById("results");
 const state = {
   oauthConfigured: false,
   authenticatedEmail: null,
+  authenticatedName: "",
   queue: [],
   results: []
 };
@@ -23,7 +24,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     return;
   }
 
-  state.queue = Array.isArray(changes.queuedRequests.newValue) ? changes.queuedRequests.newValue : [];
+  const nextQueue = Array.isArray(changes.queuedRequests.newValue) ? changes.queuedRequests.newValue : [];
+  state.queue = filterQueueForCurrentAccount(nextQueue);
   renderQueue();
 });
 
@@ -46,8 +48,11 @@ connectButton.addEventListener("click", async () => {
   try {
     const response = await sendMessage({ type: "authenticate-gmail" });
     state.authenticatedEmail = response.authenticatedEmail;
+    state.authenticatedName = response.authenticatedName || "";
     renderAuthState();
-    activityMessage.textContent = `Connected Gmail for ${response.authenticatedEmail}.`;
+    activityMessage.textContent = state.authenticatedName
+      ? `Connected Gmail for ${state.authenticatedName}.`
+      : `Connected Gmail for ${response.authenticatedEmail}.`;
   } catch (error) {
     authPill.textContent = "Needs setup";
     authHelp.textContent = error.message;
@@ -72,7 +77,7 @@ async function handlePanelActionClick(event) {
       payload
     });
 
-    state.queue = response.queue;
+    state.queue = filterQueueForCurrentAccount(response.queue);
     activityMessage.textContent = `Queued ${payload.filename} for signing.`;
     renderQueue();
     return;
@@ -94,7 +99,7 @@ async function handlePanelActionClick(event) {
       });
 
       if (Array.isArray(response.queue)) {
-        state.queue = response.queue;
+        state.queue = filterQueueForCurrentAccount(response.queue);
         renderQueue();
       }
 
@@ -136,7 +141,7 @@ async function handlePanelActionClick(event) {
     });
 
     if (Array.isArray(response.queue)) {
-      state.queue = response.queue;
+      state.queue = filterQueueForCurrentAccount(response.queue);
       renderQueue();
     }
 
@@ -156,7 +161,8 @@ async function initialize() {
 
   state.oauthConfigured = bootstrap.config.oauthConfigured;
   state.authenticatedEmail = bootstrap.config.authenticatedEmail;
-  state.queue = bootstrap.queue;
+  state.authenticatedName = bootstrap.config.authenticatedName || "";
+  state.queue = filterQueueForCurrentAccount(bootstrap.queue);
   queryInput.value = bootstrap.config.defaultQuery;
 
   renderAuthState();
@@ -167,7 +173,9 @@ async function initialize() {
 function renderAuthState() {
   if (state.authenticatedEmail) {
     authPill.textContent = "Connected";
-    authHelp.textContent = `Authenticated as ${state.authenticatedEmail}`;
+    authHelp.textContent = state.authenticatedName
+      ? `Authenticated as ${state.authenticatedName} (${state.authenticatedEmail})`
+      : `Authenticated as ${state.authenticatedEmail}`;
     connectButton.textContent = "Reconnect Gmail";
     return;
   }
@@ -233,11 +241,17 @@ function renderQueue() {
       const downloadPayload = JSON.stringify({
         queueItemId: item.id,
         messageId: item.messageId,
+        threadId: item.threadId,
+        subject: item.subject,
+        from: item.from,
         attachmentId: item.attachmentId,
         partId: item.partId,
         filename: displayFilename,
+        originalFilename: item.originalFilename || item.filename,
         mimeType: item.mimeType,
-        previewCacheKey: item.previewCacheKey || null
+        previewCacheKey: item.previewCacheKey || null,
+        accountEmail: item.accountEmail || state.authenticatedEmail || null,
+        accountName: item.accountName || state.authenticatedName || ""
       });
       const buttonLabel = item.status === "downloaded" || item.status === "signed" ? "Download Again" : "Download";
       const showOpenButton =
@@ -285,10 +299,13 @@ function renderResults() {
             subject: message.subject,
             from: message.from,
             filename: attachment.filename,
+            originalFilename: attachment.filename,
             attachmentId: attachment.attachmentId,
             partId: attachment.partId,
             mimeType: attachment.mimeType,
-            size: attachment.size
+            size: attachment.size,
+            accountEmail: state.authenticatedEmail,
+            accountName: state.authenticatedName
           });
 
           return `
@@ -320,6 +337,19 @@ function renderResults() {
       `;
     })
     .join("");
+}
+
+function filterQueueForCurrentAccount(queue) {
+  if (!Array.isArray(queue)) {
+    return [];
+  }
+
+  if (!state.authenticatedEmail) {
+    return queue;
+  }
+
+  const accountKey = String(state.authenticatedEmail).trim().toLowerCase();
+  return queue.filter((item) => String(item.accountEmail || "").trim().toLowerCase() === accountKey);
 }
 
 function formatBytes(size) {
