@@ -304,6 +304,40 @@ button:not(.secondary):not(.ghost):not(.icon-button) {
   min-width: 86px;
 }
 
+.signature-color-row {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.signature-color-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.signature-inline-colors {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.signature-inline-color {
+  border: 2px solid rgba(19, 36, 41, 0.16);
+  border-radius: 10px;
+  height: 22px;
+  min-height: 22px;
+  min-width: 22px;
+  padding: 0;
+  width: 22px;
+}
+
+.signature-inline-color.is-active {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.18);
+}
+
 .segmented-control {
   background: #eff5f6;
   border-radius: 14px;

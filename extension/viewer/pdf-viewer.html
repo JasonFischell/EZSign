@@ -70,6 +70,9 @@
             <button class="secondary" id="clearPlacementsButton" type="button" disabled>
               Clear Placements
             </button>
+            <button class="secondary" id="replySignedButton" type="button" disabled>
+              Reply to email with Signed Copy
+            </button>
             <button id="saveSignedButton" type="button" disabled>Save Signed Copy</button>
           </div>
         </header>
@@ -178,7 +181,12 @@
             <h2>Signature Settings</h2>
             <button class="secondary" id="saveSignatureDefaultsButton" type="button">Set as Default</button>
           </div>
-          <p class="muted">Choose the color used for new signatures you create in this workspace.</p>
+          <label class="field">
+            <span>Signer name</span>
+            <input id="signerNameInput" type="text" maxlength="60" placeholder="Name pulled from Gmail" />
+          </label>
+          <p class="muted" id="signerEmailText"></p>
+          <p class="muted">Choose the default color used when you create a new signature in this workspace.</p>
           <div class="color-grid" id="signatureColorGrid">
             <button class="color-option" data-signature-color="black" type="button"><span class="color-swatch black"></span><span>Black</span></button>
             <button class="color-option" data-signature-color="blue" type="button"><span class="color-swatch blue"></span><span>Blue</span></button>

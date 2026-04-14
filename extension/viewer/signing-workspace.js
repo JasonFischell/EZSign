@@ -61,11 +61,14 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     placementMode: "signature",
     signatureInputMode: "drawn",
     selectedTypedFont: TYPED_FONT_OPTIONS[0],
+    captureSignatureColor: "black",
     currentSettings: {
       signatureColor: "black",
       dateFormat: "long",
       dateColor: "black"
     },
+    accountEmail: "",
+    accountName: "",
     settingsSnapshot: null,
     savedPreferences: {
       signatureColor: "black",
@@ -128,6 +131,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     ui.saveSignatureButton.addEventListener("click", saveSignature);
     ui.clearPlacementsButton.addEventListener("click", clearPlacements);
     ui.saveSignedButton.addEventListener("click", saveSignedCopy);
+    ui.replySignedButton.addEventListener("click", replyWithSignedCopy);
     ui.signatureLibrary.addEventListener("click", handleLibraryClick);
     ui.signatureLibrary.addEventListener("pointerdown", handleSignaturePointerDown);
     ui.pagesContainer.addEventListener("pointerdown", handlePagePointerDown);
@@ -145,36 +149,36 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     window.addEventListener("pointermove", handleGlobalPointerMove);
     window.addEventListener("pointerup", handleGlobalPointerUp);
     window.addEventListener("pointercancel", cancelPointerSession);
-    window.addEventListener("beforeunload", (event) => {
-      if (!state.hasUnsavedChanges) {
-        return;
-      }
-
-      event.preventDefault();
-      event.returnValue = "";
-    });
     window.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape") {
+      if (event.key === "Escape") {
+        if (!ui.signatureModal.hidden) {
+          closeSignatureModal();
+          return;
+        }
+
+        if (!ui.settingsModal.hidden) {
+          closeSettingsModal();
+          return;
+        }
+
+        if (!ui.dateEditorModal.hidden) {
+          closeDateEditorModal();
+          return;
+        }
+
+        if (!ui.signatureEditorModal.hidden) {
+          closeSignatureEditorModal();
+        }
         return;
       }
 
-      if (!ui.signatureModal.hidden) {
-        closeSignatureModal();
+      if (!state.selectedPlacementId || isEditableTarget(event.target)) {
         return;
       }
 
-      if (!ui.settingsModal.hidden) {
-        closeSettingsModal();
-        return;
-      }
-
-      if (!ui.dateEditorModal.hidden) {
-        closeDateEditorModal();
-        return;
-      }
-
-      if (!ui.signatureEditorModal.hidden) {
-        closeSignatureEditorModal();
+      if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        removePlacement(state.selectedPlacementId);
       }
     });
   }
@@ -186,13 +190,25 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     }
 
     state.preview = await helpers.loadPreviewFromCache(state.cacheKey);
+    state.accountEmail = state.preview.accountEmail || "";
+    state.accountName = await helpers.loadSignerName(state.accountEmail, state.preview.accountName || "");
     state.documentBytes = helpers.decodeBase64Url(state.preview.base64UrlData);
-    state.signatures = await helpers.loadSignatures();
-    state.savedPreferences = await helpers.loadPreferences();
+    state.signatures = await helpers.loadSignatures(state.accountEmail);
+    state.savedPreferences = await helpers.loadPreferences(state.accountEmail);
     state.currentSettings = { ...state.savedPreferences };
+    state.captureSignatureColor = state.currentSettings.signatureColor;
+    state.placements = Array.isArray(state.preview.workspaceState?.placements)
+      ? state.preview.workspaceState.placements
+      : [];
+    state.selectedPlacementId = state.preview.workspaceState?.selectedPlacementId || null;
+    state.placementMode = state.preview.workspaceState?.placementMode || "signature";
     if (state.signatures.length > 0) {
-      state.activeSignatureId = state.signatures[0].id;
+      state.activeSignatureId =
+        state.preview.workspaceState?.activeSignatureId && state.signatures.some((signature) => signature.id === state.preview.workspaceState.activeSignatureId)
+          ? state.preview.workspaceState.activeSignatureId
+          : state.signatures[0].id;
     }
+    state.hasUnsavedChanges = state.placements.length > 0;
     signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
     ui.fileName.textContent = state.preview.filename || "Downloaded PDF";
     document.title = `${state.preview.filename || "Downloaded PDF"} - EZSign Signing Workspace`;
@@ -252,6 +268,25 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     image.src = signature.dataUrl;
     swatch.append(image);
 
+    const colorRow = document.createElement("div");
+    colorRow.className = "signature-color-row";
+    const colorLabel = document.createElement("span");
+    colorLabel.className = "signature-color-label";
+    colorLabel.textContent = "Color:";
+    const colorOptions = document.createElement("div");
+    colorOptions.className = "signature-inline-colors";
+    for (const colorKey of Object.keys(COLOR_OPTIONS)) {
+      const colorButton = document.createElement("button");
+      colorButton.type = "button";
+      colorButton.className = `signature-inline-color${signature.color === colorKey ? " is-active" : ""}`;
+      colorButton.dataset.signatureColorId = signature.id;
+      colorButton.dataset.signatureColorKey = colorKey;
+      colorButton.setAttribute("aria-label", `Set ${signature.name} color to ${COLOR_OPTIONS[colorKey].label}`);
+      colorButton.style.background = COLOR_OPTIONS[colorKey].value;
+      colorOptions.append(colorButton);
+    }
+    colorRow.append(colorLabel, colorOptions);
+
     const actions = document.createElement("div");
     actions.className = "signature-card-actions";
     const dateButton = document.createElement("button");
@@ -269,7 +304,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     }
     actions.append(dateButton, placeButton);
 
-    card.append(header, swatch, actions);
+    card.append(header, swatch, colorRow, actions);
     return card;
   }
 
@@ -293,14 +328,17 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       dataUrl: signature.dataUrl,
       width: signature.width,
       height: signature.height,
-      color: state.currentSettings.signatureColor,
-      typedText: state.signatureInputMode === "typed" ? ui.typedSignatureTextInput.value.trim() : "",
+      color: state.captureSignatureColor,
+      typedText:
+        state.signatureInputMode === "typed"
+          ? (ui.typedSignatureTextInput.value.trim() || getDefaultTypedSignatureText())
+          : "",
       fontFamily: state.signatureInputMode === "typed" ? state.selectedTypedFont : "",
       createdAt: new Date().toISOString()
     };
 
     state.signatures = [nextSignature, ...state.signatures];
-    await helpers.saveSignatures(state.signatures);
+    await helpers.saveSignatures(state.accountEmail, state.signatures);
     state.activeSignatureId = nextSignature.id;
     state.placementMode = "signature";
     renderSignatureLibrary();
@@ -312,12 +350,14 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     hidePlacementTooltip();
     ui.signatureModal.hidden = false;
     ui.signatureNameInput.value = defaultSignatureName();
-    ui.typedSignatureTextInput.value = "";
+    ui.typedSignatureTextInput.value = getDefaultTypedSignatureText();
+    ui.typedSignatureTextInput.placeholder = state.accountName || "Type your name";
     state.signatureInputMode = "drawn";
     state.selectedTypedFont = TYPED_FONT_OPTIONS[0];
+    state.captureSignatureColor = state.currentSettings.signatureColor;
     renderTypedFontSelection();
     setSignatureInputMode("drawn");
-    signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
+    signaturePad.setColor(getSignatureColorValue(state.captureSignatureColor));
     renderCaptureColorSelection();
     ui.signatureModalHelp.textContent = force
       ? "No saved signatures were found, so add one now to start signing this PDF."
@@ -334,6 +374,10 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
 
   function defaultSignatureName() {
     return state.signatures.length === 0 ? "Primary Signature" : `Signature ${state.signatures.length + 1}`;
+  }
+
+  function getDefaultTypedSignatureText() {
+    return state.accountName || "";
   }
 
   function makeUniqueSignatureName(baseName) {
@@ -353,6 +397,15 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
   }
 
   function handleLibraryClick(event) {
+    const colorButton = event.target.closest("[data-signature-color-id]");
+    if (colorButton) {
+      void updateStoredSignatureColor(
+        colorButton.dataset.signatureColorId,
+        colorButton.dataset.signatureColorKey
+      );
+      return;
+    }
+
     const deleteButton = event.target.closest("[data-delete-signature-id]");
     if (deleteButton) {
       void deleteSignature(deleteButton.dataset.deleteSignatureId);
@@ -416,12 +469,36 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     }
 
     state.hasUnsavedChanges = state.placements.length > 0;
-    await helpers.saveSignatures(state.signatures);
+    await helpers.saveSignatures(state.accountEmail, state.signatures);
     renderSignatureLibrary();
     renderAllPlacements();
     renderPlacementSummary();
     updateToolbar();
     setStatus(`Removed ${signature.name}.`);
+  }
+
+  async function updateStoredSignatureColor(signatureId, colorKey) {
+    const signature = getSignature(signatureId);
+    if (!signature || signature.color === colorKey) {
+      return;
+    }
+
+    const asset = await buildSignatureAssetForColor(signature, colorKey);
+    state.signatures = state.signatures.map((item) =>
+      item.id === signatureId
+        ? {
+            ...item,
+            color: colorKey,
+            dataUrl: asset.dataUrl,
+            width: asset.width,
+            height: asset.height
+          }
+        : item
+    );
+
+    await helpers.saveSignatures(state.accountEmail, state.signatures);
+    renderSignatureLibrary();
+    setStatus(`Updated ${signature.name} to ${COLOR_OPTIONS[colorKey].label}.`);
   }
 
   function handlePagePointerDown(event) {
@@ -675,6 +752,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     renderPlacementsForPage(pageIndex);
     renderPlacementSummary();
     updateToolbar();
+    persistWorkspaceDraft();
     setStatus(`Placed ${signature.name} on page ${pageIndex + 1}.`);
   }
 
@@ -714,6 +792,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     renderPlacementsForPage(pageIndex);
     renderPlacementSummary();
     updateToolbar();
+    persistWorkspaceDraft();
     setStatus("Added today's date. Signature placement is ready again.");
   }
 
@@ -801,6 +880,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     renderPlacementsForPage(placement.pageIndex);
     renderPlacementSummary();
     updateToolbar();
+    persistWorkspaceDraft();
     setStatus(`Removed a placement from page ${placement.pageIndex + 1}.`);
   }
 
@@ -815,6 +895,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     renderAllPlacements();
     renderPlacementSummary();
     updateToolbar();
+    persistWorkspaceDraft();
     setStatus("Cleared all un-saved placements.");
   }
 
@@ -908,6 +989,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     if (session.dragging) {
       const placement = getPlacement(session.placementId);
       if (placement) {
+        persistWorkspaceDraft();
         setStatus(
           session.type === "move"
             ? `Moved a signature on page ${placement.pageIndex + 1}.`
@@ -1124,7 +1206,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     ui.drawnSignatureFields.hidden = typedMode;
     ui.typedSignatureFields.hidden = !typedMode;
     ui.clearSignaturePadButton.hidden = typedMode;
-    signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
+    signaturePad.setColor(getSignatureColorValue(state.captureSignatureColor));
     renderCaptureColorSelection();
     renderTypedSignaturePreview();
   }
@@ -1152,14 +1234,13 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
       return;
     }
 
-    state.currentSettings.signatureColor = button.dataset.captureSignatureColor;
+    state.captureSignatureColor = button.dataset.captureSignatureColor;
     if (state.signatureInputMode === "drawn") {
-      signaturePad.recolor(getSignatureColorValue(state.currentSettings.signatureColor));
+      signaturePad.recolor(getSignatureColorValue(state.captureSignatureColor));
     } else {
-      signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
+      signaturePad.setColor(getSignatureColorValue(state.captureSignatureColor));
     }
     renderCaptureColorSelection();
-    renderSettingsState();
     renderTypedSignaturePreview();
   }
 
@@ -1167,7 +1248,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     for (const button of ui.signatureCaptureColorGrid.querySelectorAll("[data-capture-signature-color]")) {
       button.classList.toggle(
         "is-active",
-        button.dataset.captureSignatureColor === state.currentSettings.signatureColor
+        button.dataset.captureSignatureColor === state.captureSignatureColor
       );
     }
   }
@@ -1179,10 +1260,10 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     ui.typedSignaturePreview.style.fontSize = "";
 
     if (state.signatureInputMode === "typed") {
-      const previewText = ui.typedSignatureTextInput.value.trim() || "Jason Fischell";
+      const previewText = ui.typedSignatureTextInput.value.trim() || getDefaultTypedSignatureText() || "Typed signature";
       ui.typedSignaturePreview.textContent = previewText;
       ui.typedSignaturePreview.style.fontFamily = state.selectedTypedFont;
-      ui.typedSignaturePreview.style.color = getSignatureColorValue(state.currentSettings.signatureColor);
+      ui.typedSignaturePreview.style.color = getSignatureColorValue(state.captureSignatureColor);
       ui.typedSignaturePreview.style.fontSize = "38px";
       return;
     }
@@ -1204,9 +1285,9 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
 
   function buildTypedSignatureAsset() {
     return buildTypedSignatureAssetFromConfig({
-      typedText: ui.typedSignatureTextInput.value.trim(),
+      typedText: ui.typedSignatureTextInput.value.trim() || getDefaultTypedSignatureText(),
       fontFamily: state.selectedTypedFont,
-      colorKey: state.currentSettings.signatureColor
+      colorKey: state.captureSignatureColor
     });
   }
 
@@ -1244,10 +1325,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     const colorButton = event.target.closest("[data-signature-color]");
     if (colorButton) {
       state.currentSettings.signatureColor = colorButton.dataset.signatureColor;
-      signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
       renderSettingsState();
-      renderCaptureColorSelection();
-      renderTypedSignaturePreview();
       return;
     }
 
@@ -1279,7 +1357,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
             ...state.savedPreferences,
             [key]: state.currentSettings[key]
           };
-    await helpers.savePreferences(state.savedPreferences);
+    await helpers.savePreferences(state.accountEmail, state.savedPreferences);
     setStatus(
       key === "signatureColor" ? "Saved the default signature color." : "Saved the default date settings."
     );
@@ -1287,6 +1365,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
 
   function renderSettingsState() {
     updateDateFormatOptionLabels(ui.dateFormatGrid, "data-date-format", getTodayIsoValue());
+    ui.signerEmailText.textContent = state.accountEmail ? `Connected Gmail account: ${state.accountEmail}` : "";
 
     for (const button of ui.signatureColorGrid.querySelectorAll("[data-signature-color]")) {
       button.classList.toggle("is-active", button.dataset.signatureColor === state.currentSettings.signatureColor);
@@ -1303,14 +1382,23 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
 
   function openSettingsModal() {
     hidePlacementTooltip();
-    state.settingsSnapshot = { ...state.currentSettings };
+    state.settingsSnapshot = {
+      ...state.currentSettings,
+      signerName: state.accountName
+    };
+    ui.signerNameInput.value = state.accountName;
     renderSettingsState();
     ui.settingsModal.hidden = false;
   }
 
   function closeSettingsModal() {
     if (state.settingsSnapshot) {
-      state.currentSettings = { ...state.settingsSnapshot };
+      state.currentSettings = {
+        signatureColor: state.settingsSnapshot.signatureColor,
+        dateFormat: state.settingsSnapshot.dateFormat,
+        dateColor: state.settingsSnapshot.dateColor
+      };
+      state.accountName = state.settingsSnapshot.signerName || state.accountName;
       signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
       renderSettingsState();
       renderCaptureColorSelection();
@@ -1321,30 +1409,13 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
   }
 
   async function saveSettingsChanges() {
-    const previousColor = state.settingsSnapshot?.signatureColor ?? state.currentSettings.signatureColor;
-    freezePlacedSignatureSnapshots();
+    const nextSignerName = String(ui.signerNameInput.value || "").trim() || state.preview.accountName || "";
 
-    if (previousColor !== state.currentSettings.signatureColor) {
-      state.signatures = await Promise.all(
-        state.signatures.map(async (signature) => {
-          const asset = await buildSignatureAssetForColor(signature, state.currentSettings.signatureColor);
-          return {
-            ...signature,
-            color: state.currentSettings.signatureColor,
-            dataUrl: asset.dataUrl,
-            width: asset.width,
-            height: asset.height
-          };
-        })
-      );
-      await helpers.saveSignatures(state.signatures);
-      renderSignatureLibrary();
-      renderAllPlacements();
-    }
-
-    signaturePad.setColor(getSignatureColorValue(state.currentSettings.signatureColor));
-    renderCaptureColorSelection();
-    renderTypedSignaturePreview();
+    state.accountName = nextSignerName;
+    state.preview.accountName = nextSignerName;
+    await helpers.saveSignerName(state.accountEmail, nextSignerName);
+    await helpers.savePreferences(state.accountEmail, state.currentSettings);
+    persistWorkspaceDraft();
     state.settingsSnapshot = null;
     ui.settingsModal.hidden = true;
     setStatus("Saved workspace settings.");
@@ -1426,6 +1497,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     state.hasUnsavedChanges = true;
     renderPlacementsForPage(placement.pageIndex);
     closeDateEditorModal();
+    persistWorkspaceDraft();
     setStatus("Updated the placed date.");
   }
 
@@ -1613,6 +1685,7 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     state.hasUnsavedChanges = true;
     renderPlacementsForPage(placement.pageIndex);
     closeSignatureEditorModal();
+    persistWorkspaceDraft();
     setStatus("Updated the placed signature color.");
   }
 
@@ -1655,13 +1728,29 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
   }
 
   function updateToolbar() {
-    const disabled = state.placements.length === 0 || state.isRendering;
-    ui.clearPlacementsButton.disabled = disabled;
-    ui.saveSignedButton.disabled = disabled;
+    const canExportSigned = state.placements.length > 0 || Boolean(state.preview?.lastSignedAt);
+    ui.clearPlacementsButton.disabled = state.placements.length === 0 || state.isRendering;
+    ui.saveSignedButton.disabled = !canExportSigned || state.isRendering;
+    ui.replySignedButton.disabled = !canExportSigned || state.isRendering;
+  }
+
+  function persistWorkspaceDraft() {
+    state.preview = {
+      ...state.preview,
+      accountEmail: state.accountEmail,
+      accountName: state.accountName,
+      workspaceState: {
+        placements: state.placements,
+        selectedPlacementId: state.selectedPlacementId,
+        activeSignatureId: state.activeSignatureId,
+        placementMode: state.placementMode
+      }
+    };
+    void helpers.savePreviewToCache(state.cacheKey, state.preview);
   }
 
   async function saveSignedCopy() {
-    if (state.placements.length === 0) {
+    if (state.placements.length === 0 && !state.preview?.lastSignedAt) {
       setStatus("Place at least one signature before saving a signed copy.");
       return;
     }
@@ -1671,8 +1760,8 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
     setStatus("Embedding signatures into a signed PDF copy...");
 
     try {
-      const signedBytes = await buildSignedPdfBytes();
-      const filename = helpers.buildSignedFilename(state.preview.filename || "signed-document.pdf");
+      const signedBytes = state.placements.length > 0 ? await buildSignedPdfBytes() : state.documentBytes;
+      const filename = helpers.buildSignedFilename(state.preview.originalFilename || state.preview.filename || "signed-document.pdf");
       const blobUrl = URL.createObjectURL(new Blob([signedBytes], { type: "application/pdf" }));
       const downloadId = await chrome.downloads.download({
         url: blobUrl,
@@ -1689,34 +1778,76 @@ export function createWorkspace({ pdfWorkerUrl, helpers, pdfLib }) {
         return;
       }
 
-      state.preview = {
-        ...state.preview,
-        filename,
-        base64UrlData: helpers.encodeBase64Url(signedBytes),
-        lastSignedAt: new Date().toISOString()
-      };
-      state.documentBytes = signedBytes;
-      await helpers.savePreviewToCache(state.cacheKey, state.preview);
-      await helpers.saveQueueStatus(state.preview.queueItemId, {
-        status: "signed",
-        signedAt: new Date().toISOString(),
-        previewCacheKey: state.cacheKey,
-        signedFilename: filename
-      });
-
-      state.placements = [];
-      state.selectedPlacementId = null;
-      state.hasUnsavedChanges = false;
-      ui.fileName.textContent = filename;
-      document.title = `${filename} - EZSign Signing Workspace`;
-      renderPlacementSummary();
-      await renderPdfDocument();
+      await finalizeSignedDocument(signedBytes, filename);
       setStatus(`Saved signed copy as ${filename}.`);
     } catch (error) {
       state.isRendering = false;
       setStatus(`Could not save a signed copy: ${error instanceof Error ? error.message : String(error)}`);
       updateToolbar();
     }
+  }
+
+  async function replyWithSignedCopy() {
+    if (state.placements.length === 0 && !state.preview?.lastSignedAt) {
+      setStatus("Place at least one signature before replying with a signed copy.");
+      return;
+    }
+
+    state.isRendering = true;
+    updateToolbar();
+    setStatus("Preparing a Gmail reply with the signed PDF attached...");
+
+    try {
+      const signedBytes = state.placements.length > 0 ? await buildSignedPdfBytes() : state.documentBytes;
+      const filename = helpers.buildSignedFilename(state.preview.originalFilename || state.preview.filename || "signed-document.pdf");
+      await finalizeSignedDocument(signedBytes, filename);
+      await chrome.runtime.sendMessage({
+        type: "reply-with-signed-copy",
+        payload: {
+          previewCacheKey: state.cacheKey
+        }
+      });
+      setStatus(`Opened a Gmail reply draft with ${filename} attached.`);
+    } catch (error) {
+      state.isRendering = false;
+      setStatus(`Could not open a Gmail reply draft: ${error instanceof Error ? error.message : String(error)}`);
+      updateToolbar();
+    }
+  }
+
+  async function finalizeSignedDocument(signedBytes, filename) {
+    state.preview = {
+      ...state.preview,
+      filename,
+      base64UrlData: helpers.encodeBase64Url(signedBytes),
+      lastSignedAt: new Date().toISOString(),
+      accountEmail: state.accountEmail,
+      accountName: state.accountName,
+      workspaceState: {
+        placements: [],
+        selectedPlacementId: null,
+        activeSignatureId: state.activeSignatureId,
+        placementMode: "signature"
+      }
+    };
+    state.documentBytes = signedBytes;
+    await helpers.savePreviewToCache(state.cacheKey, state.preview);
+    await helpers.saveQueueStatus(state.preview.queueItemId, {
+      status: "signed",
+      signedAt: new Date().toISOString(),
+      previewCacheKey: state.cacheKey,
+      signedFilename: filename
+    });
+
+    state.placements = [];
+    state.selectedPlacementId = null;
+    state.hasUnsavedChanges = false;
+    ui.fileName.textContent = filename;
+    document.title = `${filename} - EZSign Signing Workspace`;
+    renderPlacementSummary();
+    await renderPdfDocument();
+    state.isRendering = false;
+    updateToolbar();
   }
 
   async function buildSignedPdfBytes() {
@@ -1838,6 +1969,7 @@ function getUi() {
     pagesShell: document.querySelector(".pages-shell"),
     placementTooltip: document.getElementById("placementTooltip"),
     promptAddSignatureButton: document.getElementById("promptAddSignatureButton"),
+    replySignedButton: document.getElementById("replySignedButton"),
     saveSettingsButton: document.getElementById("saveSettingsButton"),
     saveSignatureButton: document.getElementById("saveSignatureButton"),
     saveSignatureDefaultsButton: document.getElementById("saveSignatureDefaultsButton"),
@@ -1847,6 +1979,8 @@ function getUi() {
     saveSignatureEditorButton: document.getElementById("saveSignatureEditorButton"),
     settingsModal: document.getElementById("settingsModal"),
     signStatusChip: document.getElementById("signStatusChip"),
+    signerEmailText: document.getElementById("signerEmailText"),
+    signerNameInput: document.getElementById("signerNameInput"),
     signatureColorGrid: document.getElementById("signatureColorGrid"),
     signatureCaptureColorGrid: document.getElementById("signatureCaptureColorGrid"),
     signatureEditorActions: document.getElementById("signatureEditorActions"),
@@ -1869,4 +2003,13 @@ function getUi() {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function isEditableTarget(target) {
+  const element = target instanceof HTMLElement ? target : null;
+  if (!element) {
+    return false;
+  }
+
+  return Boolean(element.closest("input, textarea, [contenteditable='true']"));
 }

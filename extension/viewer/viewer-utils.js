@@ -1,5 +1,4 @@
-const SIGNATURE_STORAGE_KEY = "savedSignatures";
-const PREFERENCES_STORAGE_KEY = "ezsignViewerPreferences";
+const ACCOUNT_PROFILES_KEY = "ezsignAccountProfiles";
 const DEFAULT_PREFERENCES = {
   signatureColor: "black",
   dateFormat: "long",
@@ -20,47 +19,72 @@ export async function savePreviewToCache(cacheKey, preview) {
   await chrome.storage.session.set({ [cacheKey]: preview });
 }
 
-export async function loadSignatures() {
-  const stored = await chrome.storage.local.get({ [SIGNATURE_STORAGE_KEY]: [] });
-  if (!Array.isArray(stored[SIGNATURE_STORAGE_KEY])) {
-    return [];
-  }
-
-  return stored[SIGNATURE_STORAGE_KEY]
-    .filter((signature) => signature?.id && (signature?.dataUrl || signature?.variant === "typed"))
-    .map((signature) => ({
-      id: String(signature.id),
-      name: String(signature.name || "Saved Signature"),
-      variant: signature.variant === "typed" ? "typed" : "drawn",
-      dataUrl: signature.dataUrl ? String(signature.dataUrl) : "",
-      width: Number(signature.width || 320),
-      height: Number(signature.height || 120),
-      color: String(signature.color || "black"),
-      typedText: signature.typedText ? String(signature.typedText) : "",
-      fontFamily: signature.fontFamily ? String(signature.fontFamily) : "",
-      createdAt: signature.createdAt || new Date().toISOString()
-    }));
+export async function loadSignatures(accountEmail) {
+  const profile = await loadAccountProfile(accountEmail);
+  return profile.signatures;
 }
 
-export async function saveSignatures(signatures) {
-  await chrome.storage.local.set({ [SIGNATURE_STORAGE_KEY]: signatures });
+export async function saveSignatures(accountEmail, signatures) {
+  const profile = await loadAccountProfile(accountEmail);
+  await saveAccountProfile(accountEmail, {
+    ...profile,
+    signatures: sanitizeSignatures(signatures)
+  });
 }
 
-export async function loadPreferences() {
-  const stored = await chrome.storage.local.get({ [PREFERENCES_STORAGE_KEY]: DEFAULT_PREFERENCES });
+export async function loadPreferences(accountEmail) {
+  const profile = await loadAccountProfile(accountEmail);
+  return profile.preferences;
+}
+
+export async function savePreferences(accountEmail, preferences) {
+  const profile = await loadAccountProfile(accountEmail);
+  await saveAccountProfile(accountEmail, {
+    ...profile,
+    preferences: sanitizePreferences(preferences)
+  });
+}
+
+export async function loadSignerName(accountEmail, fallbackName = "") {
+  const profile = await loadAccountProfile(accountEmail, fallbackName);
+  return profile.signerName;
+}
+
+export async function saveSignerName(accountEmail, signerName) {
+  const profile = await loadAccountProfile(accountEmail);
+  await saveAccountProfile(accountEmail, {
+    ...profile,
+    signerName: String(signerName || "").trim()
+  });
+}
+
+export async function loadAccountProfile(accountEmail, fallbackName = "") {
+  const accountKey = normalizeAccountKey(accountEmail);
+  const stored = await chrome.storage.local.get({ [ACCOUNT_PROFILES_KEY]: {} });
+  const profiles = stored[ACCOUNT_PROFILES_KEY] || {};
+  const profile = profiles[accountKey] || {};
+
   return {
-    ...DEFAULT_PREFERENCES,
-    ...(stored[PREFERENCES_STORAGE_KEY] || {})
+    email: accountEmail || "",
+    signerName: String(profile.signerName || fallbackName || "").trim(),
+    signatures: sanitizeSignatures(profile.signatures || []),
+    preferences: sanitizePreferences(profile.preferences || {})
   };
 }
 
-export async function savePreferences(preferences) {
-  await chrome.storage.local.set({
-    [PREFERENCES_STORAGE_KEY]: {
-      ...DEFAULT_PREFERENCES,
-      ...preferences
-    }
-  });
+export async function saveAccountProfile(accountEmail, profile) {
+  const accountKey = normalizeAccountKey(accountEmail);
+  const stored = await chrome.storage.local.get({ [ACCOUNT_PROFILES_KEY]: {} });
+  const profiles = stored[ACCOUNT_PROFILES_KEY] || {};
+
+  profiles[accountKey] = {
+    email: accountEmail || "",
+    signerName: String(profile.signerName || "").trim(),
+    signatures: sanitizeSignatures(profile.signatures || []),
+    preferences: sanitizePreferences(profile.preferences || {})
+  };
+
+  await chrome.storage.local.set({ [ACCOUNT_PROFILES_KEY]: profiles });
 }
 
 export async function saveQueueStatus(queueItemId, updates) {
@@ -147,9 +171,14 @@ export function dataUrlToBytes(dataUrl) {
 
 export function buildSignedFilename(filename) {
   const safeName = sanitizeFilename(filename);
-  return safeName.toLowerCase().endsWith(".pdf")
-    ? safeName.replace(/\.pdf$/i, "-signed.pdf")
-    : `${safeName}-signed.pdf`;
+  const suffix = "_Signed_with_EZSign";
+
+  if (safeName.toLowerCase().endsWith(".pdf")) {
+    const baseName = safeName.replace(/_Signed_with_EZSign(?=\.pdf$)/i, "").replace(/\.pdf$/i, "");
+    return `${baseName}${suffix}.pdf`;
+  }
+
+  return `${safeName.replace(/_Signed_with_EZSign$/i, "")}${suffix}.pdf`;
 }
 
 function sanitizeFilename(filename) {
@@ -159,4 +188,36 @@ function sanitizeFilename(filename) {
     .replace(/\s+/g, " ");
 
   return cleaned || "signed-document.pdf";
+}
+
+function normalizeAccountKey(accountEmail) {
+  return String(accountEmail || "__default__").trim().toLowerCase();
+}
+
+function sanitizePreferences(preferences) {
+  return {
+    ...DEFAULT_PREFERENCES,
+    ...(preferences || {})
+  };
+}
+
+function sanitizeSignatures(signatures) {
+  if (!Array.isArray(signatures)) {
+    return [];
+  }
+
+  return signatures
+    .filter((signature) => signature?.id && (signature?.dataUrl || signature?.variant === "typed"))
+    .map((signature) => ({
+      id: String(signature.id),
+      name: String(signature.name || "Saved Signature"),
+      variant: signature.variant === "typed" ? "typed" : "drawn",
+      dataUrl: signature.dataUrl ? String(signature.dataUrl) : "",
+      width: Number(signature.width || 320),
+      height: Number(signature.height || 120),
+      color: String(signature.color || "black"),
+      typedText: signature.typedText ? String(signature.typedText) : "",
+      fontFamily: signature.fontFamily ? String(signature.fontFamily) : "",
+      createdAt: signature.createdAt || new Date().toISOString()
+    }));
 }
