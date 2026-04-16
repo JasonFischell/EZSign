@@ -1,22 +1,5 @@
-Make the extension ask gmail for the user's name when they first connect their gmail account. Give the user an option to edit their name in the settings wheel within the EZSign Signer. Make it so that signatures and settings are tied to the gmail account. Use the name (saved or pulled from gmail) as the default text for typed signatures. Do not force the user to add new text when creating a typed text signature if the name is available. 
+Move the "recently signed" section to after Search and before Documents Requiring signatures. Add a "reopen" button to each of those documents. 
 
-When a signature or date is selected in the document, make the delete or backspace keyboard strokes remove in addition to the remove button. 
+In the Documents Requiring Signatures section, exclude all documents that have already been signed with EZSign per the file suffix. 
 
-In the signing workspace, add a third button next to "Save Signed Copy" that says "Reply to email with Signed Copy." If that button is clicked, create a reply email to the email where the document was initially pulled from and attached a signed version of PDF already attached. Open the response email in a new window. When attaching or saving a signed PDF, it should have the same name as the original but with "_Signed_with_EZSign" added before the .pdf. 
-
-The "How it works" section says "Use Open later to return to this workspace without downloading the PDF again," but if I leave the page I get the "Changes you made may not be saved" pop-up. If I select Leave anyway, then when I reopen the document from the EZSign plugin later, all the content is gone. Make it persist and get rid of the "Changes may not be saved" pop-up.
-
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-In Gmail Assistant window: Before a gmail is connected, the only option should be "Sign In with Gmail." After gmail is connected, hide the "Gmail Access" Section. Keep the "Connected" sticker but put it at the very top right of the side panel.When the EZSign Gmail Assistant side panel is opened for the first time, it should search the users gmail automatically. 
-
-Do not show the "Gmail query" by default. Expand the default search query to include more combinations of "sign," "please sign," "signature," "firma," "firmar," "execute," "countersign," "complete," "attachment," and "return." Have 2 buttons in the search window: "Edit Search" and "Search Gmail."
-
-Add a settings wheel at the top right of the EZSign Gmail Assistant Side Panel, to the right of the "Connected"/"Please Sign In" sticker. This is where the user will be able to sign-out of the Gmail assistant. This settings section should also have the signature/date color/format settings available for editing here as well as the name pulled from gmail. This settings section will also list all of the signatures available with checkboxes so that they can be deleted in groups. 
-
-Remove the entire signing queue. Instead, just list all "Documents Requiring Signatures" and give each one the option to "Download and Open," or just "Open." If the open button is selected, open the document in the new tab signing workspace without saving it to the computer first. 
-
-
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Remove the fact that all saved signatures change colors when you edit the color in settings. Instead, make color a unique trait of each signature that can be selected individually for each stored signature before it is used. Add "Color: " and then 6 boxes (one for each color) for the user to select. The "Set as Default" setting for signature color in the settings section should be used to set the default color when creating new signatures. 
+In the signing workspace, search the PDF for places that signatures, initials, or dates are required. Add a flag to the document viewer for each place a signature/initials/date is required. This flag should not edit the document itself but make it easy for the user to identify where signatures are required. Each flag should highlight within the document to show where to sign and have an indicator on the scroll bar that the user can click to skip to that line in the document. 
