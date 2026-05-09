@@ -1,0 +1,9 @@
+EZSign
+
+A Chrome extension project for Gmail-centric document signing workflows.
+
+This public page intentionally contains only non-sensitive project information. The source repository remains private.
+
+Status: early MVP / private development
+Repository: https://github.com/JasonFischell/EZSign
+Published: 2026-05-08
