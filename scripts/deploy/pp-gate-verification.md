@@ -1,0 +1,1 @@
+Permission Protocol live gate verification. No production behavior changes.
